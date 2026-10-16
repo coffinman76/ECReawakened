@@ -1,0 +1,649 @@
+{
+  "schema_version": 1,
+  "description": "Static tutorial progression and rewards. Runtime tokens are resolved against the current account, request and server clock.",
+  "tables": {
+    "user_materia_list": [
+      {
+        "user_id": "$user_id",
+        "user_materia_id": "$new_materia_id",
+        "materia_id": "2121001",
+        "quality_type": "Command_Enums_QualityType_Two",
+        "get_datetime": "$now_ms",
+        "parameter_open_count": "1",
+        "parameter_id0": "501",
+        "parameter_id1": "101",
+        "parameter_id2": "801",
+        "parameter_id3": "701",
+        "parameter_value0": "2",
+        "parameter_value1": "5",
+        "parameter_value2": "1",
+        "parameter_value3": "1"
+      }
+    ],
+    "user_episode_battle_list": [
+      {
+        "user_id": "$user_id",
+        "story_episode_id": "110001",
+        "story_battle_id": "10106"
+      },
+      {
+        "user_id": "$user_id",
+        "story_episode_id": "110001",
+        "story_battle_id": "10101"
+      },
+      {
+        "user_id": "$user_id",
+        "story_episode_id": "110001",
+        "story_battle_id": "10102"
+      },
+      {
+        "user_id": "$user_id",
+        "story_episode_id": "110001",
+        "story_battle_id": "10103"
+      },
+      {
+        "user_id": "$user_id",
+        "story_episode_id": "110001",
+        "story_battle_id": "10104"
+      },
+      {
+        "user_id": "$user_id",
+        "story_episode_id": "110001",
+        "story_battle_id": "10105"
+      }
+    ],
+    "user_honor_list": [
+      {
+        "user_id": "$user_id",
+        "honor_id": "100001",
+        "get_datetime": "$now_ms"
+      },
+      {
+        "user_id": "$user_id",
+        "honor_id": "100004",
+        "get_datetime": "$now_ms"
+      },
+      {
+        "user_id": "$user_id",
+        "honor_id": "410011",
+        "get_datetime": "$now_ms"
+      }
+    ],
+    "user_tutorial_step_list": [
+      {
+        "user_id": "$user_id",
+        "tutorial_step_type": "Command_Enums_TutorialStepType_Initial",
+        "current_step": "210"
+      }
+    ],
+    "user_profile_list": [
+      {
+        "user_id": "$user_id",
+        "name": "$user_name",
+        "message": "$message",
+        "top_honor_id": "100001",
+        "bottom_honor_id": "100004",
+        "background_honor_id": "100011",
+        "icon_honor_id": "100008",
+        "is_show_character_rank": true
+      }
+    ],
+    "user_item_list": [
+      {
+        "user_id": "$user_id",
+        "item_id": "1",
+        "count": "710",
+        "total_obtain_count": "710",
+        "get_datetime": "$now_ms",
+        "last_get_datetime": "$now_ms"
+      }
+    ],
+    "user_battle_entry_list": [
+      {
+        "user_id": "$user_id",
+        "entry_count": "6",
+        "battle_id": "101060",
+        "battle_type": "Command_Enums_BattleType_Story",
+        "content_id": "110001",
+        "battle_progress_type": "Command_Enums_BattleProgressType_End",
+        "party_id": "301",
+        "app_version": "$app_version",
+        "master_version": "$master_version",
+        "start_datetime": "$now_ms"
+      }
+    ],
+    "user_episode_entry_list": [
+      {
+        "user_id": "$user_id",
+        "party_id": "301",
+        "episode_id": "110001",
+        "story_mode_type": "Command_Enums_StoryModeType_StoryParty"
+      }
+    ],
+    "user_time_list": [
+      {
+        "user_id": "$user_id",
+        "user_time_type": "Command_Enums_UserTimeType_TutorialFinish",
+        "datetime": "$now_ms"
+      },
+      {
+        "user_id": "$user_id",
+        "user_time_type": "Command_Enums_UserTimeType_BeginnerGachaTriggerDatetime",
+        "datetime": "$now_ms"
+      }
+    ],
+    "user_mission_list": [
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001055",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "400001008",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001008",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001027",
+        "progress_count": "45"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108013",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190605201",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001006",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108001",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001046",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400102001",
+        "progress_count": "45"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600801",
+        "progress_count": "3",
+        "notified_progress_count": "1"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108015",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "705102002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190602001",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "400001010",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001036",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600301",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108004",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190605601",
+        "progress_count": "3",
+        "notified_progress_count": "1"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700502002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "1000002032",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001032",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600601",
+        "progress_count": "3",
+        "notified_progress_count": "1"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001004",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700202002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190604901",
+        "progress_count": "3",
+        "notified_progress_count": "1"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400104005",
+        "progress_count": "7"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108014",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400106001",
+        "progress_count": "4"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700402002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108012",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108006",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001005",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600201",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600501",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700902002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001007",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001040",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600701",
+        "progress_count": "3",
+        "notified_progress_count": "1"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "705602002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600901",
+        "progress_count": "3",
+        "notified_progress_count": "1"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001030",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108007",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001031",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "704902002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190102001",
+        "progress_count": "4"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "705002002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "705202002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190100401",
+        "progress_count": "710"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190100801",
+        "progress_count": "18"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001009",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700302002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001029",
+        "progress_count": "18"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700102002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700802002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001022",
+        "progress_count": "4"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190605001",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600101",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700702002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108005",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108009",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "700602002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001042",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190600401",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108003",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108011",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "702002002",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001038",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "400001009",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108008",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400104003",
+        "progress_count": "10"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "190605101",
+        "progress_count": "3"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400108010",
+        "progress_count": "3"
+      }
+    ],
+    "user_materia_collection_list": [
+      {
+        "user_id": "$user_id",
+        "materia_evolve_id": "21210011",
+        "quality_two_obtain_count": "1",
+        "max_level": "1"
+      }
+    ],
+    "user_episode_list": [
+      {
+        "user_id": "$user_id",
+        "story_episode_id": "110001",
+        "story_party_mode_clear_datetime": "$now_ms"
+      }
+    ],
+    "user_character_list": [
+      {
+        "user_id": "$user_id",
+        "character_id": "9",
+        "exp": "600",
+        "mission_group_id": "700901",
+        "overaccel_mission_group_id": "2300901"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "2",
+        "exp": "600",
+        "mission_group_id": "700201",
+        "overaccel_mission_group_id": "2300201"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "8",
+        "exp": "600",
+        "mission_group_id": "700801",
+        "overaccel_mission_group_id": "2300801"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "52",
+        "exp": "600",
+        "mission_group_id": "705201",
+        "overaccel_mission_group_id": "2305201"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "20",
+        "exp": "600",
+        "mission_group_id": "702001",
+        "overaccel_mission_group_id": "2302001"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "51",
+        "exp": "600",
+        "mission_group_id": "705101",
+        "overaccel_mission_group_id": "2305101"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "3",
+        "exp": "600",
+        "mission_group_id": "700301",
+        "overaccel_mission_group_id": "2300301"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "4",
+        "exp": "600",
+        "mission_group_id": "700401",
+        "overaccel_mission_group_id": "2300401"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "49",
+        "exp": "600",
+        "mission_group_id": "704901",
+        "overaccel_mission_group_id": "2304901"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "50",
+        "exp": "600",
+        "mission_group_id": "705001",
+        "overaccel_mission_group_id": "2305001"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "7",
+        "exp": "600",
+        "mission_group_id": "700701",
+        "overaccel_mission_group_id": "2300701"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "56",
+        "exp": "600",
+        "mission_group_id": "705601",
+        "overaccel_mission_group_id": "2305601"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "1",
+        "exp": "600",
+        "overaccel_mission_group_id": "2300101"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "5",
+        "exp": "600",
+        "mission_group_id": "700501",
+        "overaccel_mission_group_id": "2300501"
+      },
+      {
+        "user_id": "$user_id",
+        "character_id": "6",
+        "exp": "600",
+        "mission_group_id": "700601",
+        "overaccel_mission_group_id": "2300601"
+      }
+    ],
+    "user_dungeon_entry_list": [
+      {
+        "user_id": "$user_id",
+        "dungeon_type": "Command_Enums_DungeonType_Story",
+        "party_id": "301",
+        "entry_count": "1",
+        "dungeon_id": "1110001",
+        "content_id": "110001",
+        "dungeon_progress_type": "Command_Enums_DungeonProgressType_End"
+      }
+    ]
+  },
+  "other_info": {
+    "has_gift": true
+  }
+}

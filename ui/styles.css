@@ -1,0 +1,32 @@
+:root { font-family: "Segoe UI", system-ui, sans-serif; color: #222; background: #f5f5f5; font-size: 13px; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 720px; margin: auto; padding: 16px; }
+header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+h1 { font-size: 21px; margin: 0; }
+header span, .hint { color: #646464; }
+fieldset { min-width: 0; margin: 0 0 12px; padding: 12px; border: 1px solid #d5d5d5; border-radius: 5px; }
+legend { padding: 0 5px; font-weight: 600; }
+button, select, summary { font: inherit; border: 1px solid #ccc; background: #fff; border-radius: 4px; min-height: 30px; color: inherit; }
+button { padding: 5px 10px; cursor: pointer; }
+button:hover:not(:disabled), summary:hover { background: #edf3fc; border-color: #6c96cf; }
+button:disabled, select:disabled { opacity: .5; cursor: default; }
+button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid #3576ba; outline-offset: 2px; }
+select { width: 100%; padding: 3px 6px; }
+.account-grid { display: grid; grid-template-columns: 1fr 130px; gap: 10px; }
+.stack { display: grid; gap: 6px; }
+#accounts { height: 100%; min-height: 104px; }
+.hint { font-size: 12px; margin: 8px 0 0; overflow-wrap: anywhere; }
+.split { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; min-width: 0; }
+.client-data-row { margin-top: 8px; }
+.server-row { display: flex; align-items: center; gap: 8px; }
+#server-state { margin-left: auto; font-size: 12px; }
+.label-row { display: grid; grid-template-columns: 78px 1fr; gap: 6px; align-items: center; margin-top: 8px; }
+.label-row .split { grid-template-columns: 1fr 150px; }
+details { position: relative; }
+summary { padding: 5px 8px; cursor: pointer; white-space: nowrap; list-style: none; text-align: center; }
+.menu { position: absolute; z-index: 2; right: 0; top: 34px; min-width: 180px; padding: 5px; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 3px 8px #0002; display: grid; gap: 4px; }
+.menu button { text-align: left; }
+pre { height: 150px; background: white; border: 1px solid #d5d5d5; border-radius: 4px; padding: 8px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 Consolas, monospace; }
+footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+#operation { color: #666; font-size: 12px; }

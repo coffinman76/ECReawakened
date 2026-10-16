@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'">
+  <title>Ever Crisis: Reawakened</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+<main>
+  <header><h1>Ever Crisis: Reawakened</h1></header>
+  <fieldset><legend>1. Your account</legend>
+    <div class="account-grid">
+      <select id="accounts" size="4" aria-label="Accounts"></select>
+      <div class="stack"><button data-action="import_account">Import JSON…</button><button data-action="new">New account</button><button id="use" data-action="use">Switch account</button><button id="remove" data-action="remove">Remove account…</button></div>
+    </div>
+    <p class="hint">The account marked ▶ is the one you play.</p>
+  </fieldset>
+  <fieldset><legend>2. Reawakened connection</legend>
+    <div class="server-row"><button id="start" data-action="start">Start</button><button id="stop" data-action="stop" disabled>Stop</button><span id="server-state" role="status">Stopped</span></div>
+    <div class="label-row"><label for="season">Season pass</label><select id="season"><option value="0">None (all ended)</option></select></div>
+    <div class="label-row"><label for="ip">LAN IP</label><div class="split"><select id="ip" aria-label="Server LAN IP"></select><details id="connection"><summary>Connection options</summary><div class="menu"><button id="dns">Copy DNS rewrites</button><button data-action="refresh_network">Refresh IP addresses</button></div></details></div></div>
+  </fieldset>
+  <fieldset><legend>3. Steam game</legend>
+    <div class="server-row"><button id="play" data-action="play" disabled>Play</button><button id="protect" data-action="protect">Protect…</button><button id="use-copy" data-action="use_copy">Use a copy…</button></div>
+    <p id="game-info" class="hint">Finding game…</p>
+    <div class="split client-data-row"><button id="client-data-find" data-action="find_client_data">Find MasterData &amp; LocalizeText</button><button id="client-data-source" data-action="choose_client_data">Choose folder…</button></div>
+    <p id="client-data-folder" class="hint"></p>
+    <p id="client-data-info" class="hint" role="status">Not checked</p>
+  </fieldset>
+  <pre id="log" aria-label="Launcher log" tabindex="0"></pre>
+  <footer><span id="operation" role="status">Setting up…</span><button data-action="save_logs">Save logs</button></footer>
+  <button data-action="open_data">Open data folder</button><p id="data-folder" class="hint"></p>
+</main>
+</body>
+</html>

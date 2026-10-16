@@ -1,0 +1,18 @@
+{
+ "materia": {
+  "quality_up_chance": 0.15,
+  "extra_param_chance": 0.5,
+  "value_bias": 0.0
+ },
+ "paid_crystal_item_as_stone": 1,
+ "rare_wave_chance": 0.25,
+ "minor_guild_medals_per_stamina": 10,
+ "coop_medals_per_stamina": 1,
+ "coop_as_solo": true,
+ "memoria_crystal_odds": [12, 25, 27, 18, 10, 5, 3],
+ "memoria_crystal_odds_boost": 9,
+ "memoria_complete_crystal_chance": 0.12,
+ "uncapped_items": [
+  52
+ ]
+}

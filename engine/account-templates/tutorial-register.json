@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "description": "Static tutorial progression and rewards. Runtime tokens are resolved against the current account, request and server clock.",
+  "tables": {
+    "user_honor_list": [
+      {
+        "user_id": "$user_id",
+        "honor_id": "100001",
+        "get_datetime": "$now_ms"
+      },
+      {
+        "user_id": "$user_id",
+        "honor_id": "100004",
+        "get_datetime": "$now_ms"
+      }
+    ],
+    "user_tutorial_step_list": [
+      {
+        "user_id": "$user_id",
+        "tutorial_step_type": "Command_Enums_TutorialStepType_Initial",
+        "current_step": "160"
+      }
+    ],
+    "user_profile_list": [
+      {
+        "user_id": "$user_id",
+        "name": "$user_name",
+        "message": "$message",
+        "top_honor_id": "100001",
+        "bottom_honor_id": "100004",
+        "background_honor_id": "100011",
+        "icon_honor_id": "100008",
+        "is_show_character_rank": true
+      }
+    ],
+    "user_mission_list": [
+      {
+        "user_id": "$user_id",
+        "mission_id": "190100801",
+        "progress_count": "18"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "2400104005",
+        "progress_count": "7"
+      },
+      {
+        "user_id": "$user_id",
+        "mission_id": "100001029",
+        "progress_count": "18"
+      }
+    ]
+  },
+  "other_info": {}
+}

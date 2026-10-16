@@ -1,0 +1,9 @@
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.0
+protobuf==7.36.2
+pycryptodome==3.24.0
+msgpack==1.2.3
+lz4==4.4.5
+pywebview==6.2.1
+psutil==7.2.2

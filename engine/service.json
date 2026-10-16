@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "master_base_url": "https://client-masterdata-c9ps53g2.app.gl.ffviiec.com/prd",
+  "check": {
+    "api_url": "game-q74z3cyn.app.gl.ffviiec.com",
+    "terms_update_times": "1640930400000",
+    "octo_version": 1,
+    "octo_url": "resources-api-c9ps53g2.app.gl.ffviiec.com",
+    "webview_url": "webview-w62j4u3y.app.gl.ffviiec.com",
+    "chat_url": "chat-pd381ne.app.gl.ffviiec.com"
+  }
+}
