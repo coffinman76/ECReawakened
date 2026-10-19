@@ -57,6 +57,60 @@ def steam_game_dir():
     return None
 
 
+def last_run_game_dir():
+    """The folder the game last ran from, as its own Player.log says ("Loading player data from <folder>/FF7EC_Data/..."),
+    so a game kept outside Steam and the protected copy is found too. None if the log is missing or the folder is gone."""
+    local = os.environ.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
+    logs = os.path.join(os.path.dirname(local), "LocalLow", "SquareEnix", "FF7EC")
+    for name in ("Player.log", "Player-prev.log"):
+        try:
+            with open(os.path.join(logs, name), encoding="utf-8", errors="replace") as f: head = f.read(8192)
+        except OSError: continue
+        m = re.search(r"Loading player data from (.+?)[\\/]FF7EC_Data[\\/]data\.unity3d", head)
+        if m and os.path.isfile(os.path.join(m[1], "FF7EC" + ".exe")): return os.path.normpath(m[1])
+    return None
+
+
+def installed_index(notes=None):
+    """No Steam asset index yet (MasterLanguageData.zip not extracted): import the one the game itself keeps, from the
+    game copy, Steam's folder and the folder the game last ran from (the newest revision is served). Never fails the
+    caller; a file that will not read is skipped, and why goes in notes."""
+    from engine.catalogs import ingest, select
+    notes = [] if notes is None else notes
+    try:
+        select('steam', HOME); return []
+    except ValueError: pass
+    folders = list(dict.fromkeys(d for d in (game_dir(), steam_game_dir(), last_run_game_dir()) if d))
+    if not folders: notes.append("game folder not found (no protected copy, no Steam FF7EC folder, and the game's "
+                                 "Player.log names none)")
+    imported = []
+    for g in folders:
+        f = os.path.join(g, "octo", "pdb", "3001", "323173179", "octocacheevai")
+        if not os.path.isfile(f):
+            notes.append(f"no asset index at {f}"); continue
+        try: imported.append(dict(ingest('steam', f, HOME), source=f))
+        except Exception as e: notes.append(f"could not read {f}: {e}")
+    if imported: notes.clear()
+    return imported
+
+
+def saved_list(blob):
+    """Write the game's saved copy of the asset list (plain form: one zero byte, then the list) so it matches what this
+    server serves. The game's own encrypted copy fails to load on every start otherwise."""
+    g = game_dir()
+    if not g: return "game folder not found"
+    f = os.path.join(g, "octo", "pdb", "3001", "323173179", "octocacheevai")
+    want = b"\x00" + blob
+    try:
+        if open(f, "rb").read() == want: return "already current"
+    except OSError: pass
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    tmp = f + ".part"
+    with open(tmp, "wb") as h: h.write(want)
+    os.replace(tmp, f)
+    return f"written, {len(want)} bytes"
+
+
 class Parent:
     """The window that started this server. gone() is True once that process has ended, however it ended (closed,
     killed, crashed), so the server never outlives its window and its hosts entries never outlive the server."""
@@ -128,6 +182,14 @@ def cmd_serve(parent_pid=0, bind='0.0.0.0', port=443, system_setup=True):
         except Exception as e: log.error("local save: not set up (%r); the game's own GameSave is used as it is", e)
     if system_setup:
         local_save()
+        try:
+            from engine.catalogs import select
+            notes = []
+            for c in installed_index(notes):    # the window imports at its start; this covers a start it skipped
+                log.info('asset index: imported steam r%s from %s', c['revision'], c['source'])
+            for n in notes: log.warning('asset index: %s', n)
+            log.info('saved asset list: %s', saved_list(select('steam', HOME).data))
+        except Exception as e: log.error("saved asset list: %r", e)
     stop = threading.Event()
     for s in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
         if s is not None: signal.signal(s, lambda *_: stop.set())
@@ -287,6 +349,9 @@ def main():
         old = os.path.join(HOME, 'saves')
         if os.path.exists(old): localsave.detach(HOME, old)
         return out(ok=True, moved=storage.migrate(HOME))
+    if a[0] == 'ingest' and len(a) == 3:
+        from engine.catalogs import ingest
+        return out(ok=True, **ingest(a[1], a[2], HOME))
     if a[0] == 'network':
         from engine import network, net
         return out(ok=True, addresses=network.lan_addresses(), hosts=net.HOSTS + [net.SDK_HOST],
@@ -296,6 +361,20 @@ def main():
     if a[0] == 'prepare-client-data':
         folders = [a[index + 1] for index in range(1, len(a) - 1) if a[index] == '--game']
         return cmd_prepare_client_data(folders, option('--documents', None))
+    if a[0] == 'ingest-folder':
+        from engine.catalogs import ingest
+        from pathlib import Path
+        imported = []
+        for platform in ('steam', 'android', 'ios'):
+            folder = Path(HOME) / 'gameassets' / 'fileindex' / 'ingest' / platform
+            for file in sorted(folder.glob('*')):
+                if file.is_file() and (file.name == 'octocacheevai' or file.suffix.lower() == '.pb'):
+                    imported.append(ingest(platform, file, HOME))
+        notes = []
+        return out(ok=True, imported=imported + installed_index(notes), notes=notes)
+    if a[0] == 'fetch-client-data':
+        return out(ok=False, error='MasterData and LocalizeText CDN downloading has been removed. '
+                   'Use prepare-client-data to find complete files from your existing installation.')
     if a[0] == "seasons": return cmd_seasons()
     if a[0] == "unhost": return cmd_unhost()
     if a[0] == "list": return cmd_list()
@@ -309,4 +388,6 @@ def main():
 if __name__ == "__main__":
     try: main()
     except Exception as e:
-        out(ok=False, error=str(e)); sys.exit(1)
+        import traceback   # where it failed goes in the launcher log too: a bare "[Errno 22] Invalid argument" says too little
+        f, cmd = traceback.extract_tb(e.__traceback__)[-1], sys.argv[1] if len(sys.argv) > 1 else "engine"
+        out(ok=False, error=f"{e} ({cmd}: {os.path.basename(f.filename)} line {f.lineno})"); sys.exit(1)

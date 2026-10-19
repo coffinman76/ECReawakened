@@ -60,6 +60,8 @@ def rewrite_ids_bytes(plain, old, new):
     m.ParseFromString(plain)
     return m.SerializeToString() if rewrite_ids(m, old, new) else plain
 def create_account(folder, user_id, origin, extra=None):
+    """A new account from the readable starter defaults (engine/account-templates/new-account.json), with its own ids
+    and today's dates; no recorded server reply is used."""
     from engine.new_account import build
     now = time.time()
     raw = build(user_id, now_ms=int(now * 1000)).SerializeToString()

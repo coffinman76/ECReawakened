@@ -180,16 +180,28 @@ def repair_lineups(st):
             print(f"lineup repair: {st.user_id} shop {r.shop_id} slot {r.idx}: item {old} not in master data -> {(r.shop_item_id if opts else 'removed')}")
     return len(bad)
 LINK_DATA_MISSION = 2200001001
+LINK_DATA_SET = 2200001      # "Link Data": link data (2200001001), link the mobile app and Steam (2200001002)
 
 def _link_data_done(st):
+    """Square's account-link missions need servers that are gone: they count as done and claimed, without their
+    crystals, so the home screen stops offering them. They are set missions (m_mission col 3 = 3), kept as flags in
+    user_mission_set_list; older builds marked only the first, in user_mission_list."""
     row = st.get('user_mission_list', LINK_DATA_MISSION)
-    if row is not None and row.received_progress_count >= 1:
+    if row is None or row.received_progress_count < 1:
+        row = row or st.new_row('user_mission_list', mission_id=LINK_DATA_MISSION)
+        row.progress_count = max(row.progress_count, 1)
+        row.received_progress_count = row.notified_progress_count = 1
+        with st.transaction('link data: counts as linked') as tx:
+            tx.upsert('user_mission_list', row)
+    links = [m for m in md('m_mission') if m[1] == LINK_DATA_SET and m[3] == 3]
+    s = st.get('user_mission_set_list', LINK_DATA_SET) or st.new_row('user_mission_set_list', mission_set_id=LINK_DATA_SET)
+    if not links or all(_set_flag(s, 'received', m[2]) for m in links):
         return
-    row = row or st.new_row('user_mission_list', mission_id=LINK_DATA_MISSION)
-    row.progress_count = max(row.progress_count, 1)
-    row.received_progress_count = row.notified_progress_count = 1
-    with st.transaction('link data: counts as linked') as tx:
-        tx.upsert('user_mission_list', row)
+    for m in links:
+        for flag in ('achieved', 'notified', 'received'):
+            _set_flag_on(s, flag, m[2])
+    with st.transaction('link data: account links count as done') as tx:
+        tx.upsert('user_mission_set_list', s)
 
 def _tut_finish_heal(st):
     ini = st.get('user_tutorial_step_list', _TUT_INITIAL_T)
@@ -226,6 +238,22 @@ def _stage_partners(stage_id):
     """The other stages a win on this one clears: its original, or its copies."""
     pairs = _stage_copies()
     return [pairs[stage_id]] if stage_id in pairs else [c for c, o in pairs.items() if o == stage_id]
+def _stage_copies_heal(st):
+    """A list-card copy made after its original was won (Critical Threats' own cards came back with copies on the list)
+    shows cleared, as a win on either would have made it; no reward is paid."""
+    T = st.tables['user_event_solo_battle_list']
+    miss = [(c, T[o,]) for c, o in _stage_copies().items()
+            if (o,) in T and T[o,].total_win_count > 0 and not ((c,) in T and T[c,].total_win_count > 0)]
+    if not miss:
+        return 0
+    with st.transaction('stage copies: cleared like their originals') as tx:
+        for c, orow in miss:
+            row = st.get('user_event_solo_battle_list', c) or st.new_row('user_event_solo_battle_list', event_solo_battle_id=c)
+            row.total_win_count = 1
+            row.high_rank_type = max(row.high_rank_type, orow.high_rank_type)
+            tx.upsert('user_event_solo_battle_list', row)
+    print(f'stage copies heal: {st.user_id} had {len(miss)} won stage(s) whose list-card copies showed unwon - marked won')
+    return len(miss)
 GIFT_SETS = (((1046,), 20025032003, 'Umbral Blade, 2025-03-07'), ((20037, 4045), 20025101001, 'Rousing Arc Sword + Rousing Wizer Staff, 2025-09-25 (2nd anniversary)'))
 
 def _gift_weapons_heal(st):
@@ -342,6 +370,10 @@ def user_title(st, req, ctx):
     except Exception as e:
         print(f'gift weapons heal failed for {st.user_id}: {e!r}')
     try:
+        _stage_copies_heal(st)
+    except Exception as e:
+        print(f'stage copies heal failed for {st.user_id}: {e!r}')
+    try:
         _weapon_upgrade_missions_heal(st)
     except Exception as e:
         print(f'weapon upgrade missions heal failed for {st.user_id}: {e!r}')
@@ -418,6 +450,10 @@ def user_title(st, req, ctx):
         _gear_owned_heal(st)
     except Exception as e:
         print(f'gear exchange heal failed for {st.user_id}: {e!r}')
+    try:
+        _craft_slot_heal(st)
+    except Exception as e:
+        print(f'craft slot heal failed for {st.user_id}: {e!r}')
     login_bookkeeping(st)
     _link_data_done(st)
     repair_lineups(st)
@@ -842,7 +878,9 @@ def grant_reward(st, tx, reward_id, count, infos=None):
     elif rtype == RT_WEAPON:
         rwp = mdx('m_reward_weapon', 0).get((reward_id,))
         for _ in range(max(1, count)):
-            _grant_weapon(st, tx, target, rwp[1] if rwp and rwp[1] else 1, infos, from_gacha=False)
+            ri = _grant_weapon(st, tx, target, rwp[1] if rwp and rwp[1] else 1, infos, from_gacha=False)
+            if rwp and (rwp[2] or rwp[4]):
+                _reward_weapon_state(st, tx, target, rwp, ri)
         return
     elif rtype == RT_MATERIA:
         spec = mdx('m_reward_materia', 0).get((reward_id,))
@@ -2312,6 +2350,32 @@ def _grant_weapon(st, tx, weapon_id, rarity, infos=None, now=None, from_gacha=Tr
         tx.upsert('user_weapon_list', w)
         wo.weapon_get_type = WGT_NEW
     return ri
+
+def _reward_weapon_state(st, tx, weapon_id, rwp, ri):
+    """m_reward_weapon [id, rarity, level, upgrade type, upgrade count]: a reward can come already levelled and
+    overboosted (login bonus 3245: Lv. 120 OB6). An owned weapon is only ever raised to it."""
+    w = st.get('user_weapon_list', weapon_id)
+    mw = mdx('m_weapon', 0).get((weapon_id,))
+    if not w or not mw:
+        return
+    wo = ri.reward_option.weapon_option
+    wo.last_level = _lvl_weapon(weapon_id, w.exp)
+    wo.last_weapon_upgrade_type = w.weapon_upgrade_type
+    wo.last_upgrade_count = w.upgrade_count
+    lv = mdx('m_weapon_level', 0, 1).get((mw[3], rwp[2])) if rwp[2] else None
+    if lv and lv[2] > w.exp:
+        need = [r[1] for r in md('m_weapon_release_setting') if r[0] == mw[12] and r[2] >= rwp[2]]
+        if need:
+            w.release_count = max(w.release_count, min(need))
+        w.exp = lv[2]
+    # A weapon on the Limit track is already past the top Rank overboost.
+    if rwp[3] and rwp[4] and w.weapon_upgrade_type != P.Command_Enums_WeaponUpgradeType.Value('Command_Enums_WeaponUpgradeType_Limit') and rwp[4] > w.upgrade_count:
+        w.weapon_upgrade_type = rwp[3]
+        w.upgrade_count = rwp[4]
+    wo.level = _lvl_weapon(weapon_id, w.exp)
+    wo.weapon_upgrade_type = w.weapon_upgrade_type
+    wo.upgrade_count = w.upgrade_count
+    tx.upsert('user_weapon_list', w)
 
 def _grant_batch(st, tx, picks, infos, now=None):
     slots = [infos.add() for _ in picks]
@@ -4033,6 +4097,22 @@ def _fill_open_slots(m):
         n += 1
     return n
 
+def _craft_slot_heal(st):
+    """A materia synth slot marked busy with no synth behind it (a Never Crisis import leaves out synths in progress):
+    empty the slot, so the synth screen has nothing missing to show and the slot can be used again."""
+    stuck = [c for c in st.tables['user_craft_list'].values()
+             if not c.is_empty and c.craft_type == CT_MATERIA and not st.get('user_materia_craft_list', c.idx)]
+    if not stuck:
+        return 0
+    with st.transaction('craft: empty slots with no synth') as tx:
+        for c in stuck:
+            c.is_empty = True
+            tx.upsert('user_craft_list', c)
+            for row in [r for r in st['user_craft_option_item_list'].values() if r.idx == c.idx]:
+                tx.delete('user_craft_option_item_list', row)
+    print(f'craft slot heal: {st.user_id} {len(stuck)} synth slot(s) emptied')
+    return len(stuck)
+
 def _materia_slot_heal(st):
     bad = [m for m in st.tables['user_materia_list'].values() if any((not getattr(m, f'parameter_id{i}') for i in range(m.parameter_open_count)))]
     if not bad:
@@ -5349,6 +5429,17 @@ HANDLERS.update({f'/api/pvt/shop/extend/{k}': _extend(k) for k in EXTEND})
 HANDLERS.update({'/api/pvt/weapon/limit/medal/exchange': weapon_limit_medal_exchange, '/api/pvt/gacha/wish/choice': gacha_wish_choice, '/api/pvt/mission/special/change': mission_special_change, '/api/pvt/shop/exchange/bulk': shop_exchange_bulk, '/api/pvt/shop/reset/lineup': shop_reset_lineup})
 LOGIN_MSG = 991000000000014
 _LB = {}
+# Login bonus 3245 (2025-09-06 to 2026-03-06: two Lv. 120 OB6 weapons of one character a day for 15 days) runs again, whatever its dates,
+# for accounts made on this server from STARTER_SINCE on. Imported accounts (origin "archived") and older ones never get it.
+STARTER_LOGIN_BONUS = 3245
+STARTER_SINCE = 1792195200000  # 2026-10-17 00:00 UTC
+PR_GAME_START = P.Command_Enums_PlayRecordType.Value('Command_Enums_PlayRecordType_GameStartDatetime')
+
+def _starter_account(st):
+    if getattr(st, 'origin', 'archived') != 'new':
+        return False
+    pr = st.get('user_play_record_list', PR_GAME_START)
+    return bool(pr and pr.date_value >= STARTER_SINCE)
 
 def login_bonus(st, req, ctx):
     now = (ctx or {}).get('now_ms') or now_ms()
@@ -5369,7 +5460,8 @@ def login_bonus(st, req, ctx):
             return _resp(tx, 'post_pvt_login_bonus', body)
         obt = P.Command_Enums_RewardObtainType.Value('Command_Enums_RewardObtainType_Login')
         mission_event(st, tx, 'ProgressLogin')
-        active = [lb for lb in md('m_login_bonus') if not lb[9] and lb[10] <= now and (lb[11] == 0 or now <= lb[11])]
+        starter = _starter_account(st)
+        active = [lb for lb in md('m_login_bonus') if not lb[9] and (lb[10] <= now and (lb[11] == 0 or now <= lb[11]) or (starter and lb[0] == STARTER_LOGIN_BONUS))]
 
         def running(lb):
             sh = sorted(_LB['sheets'].get(lb[4], []), key=lambda r: r[2])

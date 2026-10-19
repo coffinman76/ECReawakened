@@ -11,7 +11,7 @@ game has one Season Pass button and shows one season. The premium track needs no
 gives every account each season's premium item."""
 import base64, hashlib, json, os, struct
 from engine import storage
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 FAR = 32503680000000      # 3000-01-01, as the earlier event openings use
 TABLES = ("m_condition", "m_season_pass")
@@ -50,12 +50,18 @@ def _windows(home):
     return {s[0]: (s, of(s[2]) + [c for c in of(s[4]) if c[0] not in {x[0] for x in of(s[2])}], of(s[3])) for s in _rows(home, "m_season_pass")}
 
 
+def _month(ms):
+    """'Jun 2026' for a time in ms. Not fromtimestamp: on Windows that fails with Errno 22 past the year 3000."""
+    try: return (datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(milliseconds=ms)).strftime("%b %Y")
+    except (OverflowError, ValueError): return "?"
+
+
 def listing(home):
     """[{id, label}] for the launcher, newest first."""
     out = []
     for sid, (s, win, _) in sorted(_windows(home).items(), reverse=True):
         a = min((c[5] for c in win if c[5]), default=0); b = max((c[6] for c in win if c[6]), default=s[6])
-        d = lambda ms: datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%b %Y") if ms else "?"
+        d = lambda ms: _month(ms) if ms else "?"
         out.append({"id": sid, "label": f"Season {sid} ({d(a)} - {d(b)})"})
     return out
 

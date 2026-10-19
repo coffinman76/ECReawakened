@@ -1,12 +1,12 @@
 """Generate starter accounts from readable defaults, without a binary recording."""
 import json
-from pathlib import Path
+import os
 import secrets
 import time
 
 from google.protobuf.json_format import ParseDict
 
-from engine import wire as P
+from engine import storage, wire as P
 
 
 def _resolve(value, runtime):
@@ -26,8 +26,8 @@ def build(user_id, now_ms=None):
     if not 0 < user_id < 2**63:
         raise ValueError('Account ID must be a positive signed 64-bit integer.')
     now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
-    path = Path(__file__).resolve().parent / 'account-templates' / 'new-account.json'
-    with path.open(encoding='utf-8') as stream:
+    path = storage.path('res', 'new-account.json', root=os.environ.get('EC_HOME') or os.getcwd())
+    with open(path, encoding='utf-8') as stream:
         defaults = json.load(stream)
     if defaults.get('schema_version') != 1:
         raise ValueError('Unsupported starter-account defaults version.')

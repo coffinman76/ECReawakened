@@ -6,8 +6,9 @@ told by the recipe (engine/data/masterdata-patches.json):
 - "list_cards": several events on one card that opens the event page's area list (entries on the left, the chosen
   entry's stages on the right). The events' areas move under the card; stage and area ids stay. With "stories", every
   event keeps its own card (its story-fight areas, or its first area); its other areas go on the list. For events in
-  "copies" the own card keeps every area and the list gets copies of the others (own ids; a win on either a copy or
-  its original clears both, so first-clear rewards are paid once: engine/rules.py _stage_copies).
+  "copies" the own card keeps every area and the list gets copies of the others, or of every area without "stories"
+  (own ids; a win on either a copy or its original clears both, so first-clear rewards are paid once: engine/rules.py
+  _stage_copies). Critical Threats are copied so their pages, with their ticket exchanges, stay open.
 - "guild_card": the guild battles, which were fought online, as solo stages on one card ("mock battles").
 - "escalation_cards": every Escalation ladder on one card and every Escalation co-op area on a second.
 - "coop_as_solo" (from gameplay-settings.json, on unless false): every co-op fight also as a solo stage.
@@ -227,6 +228,10 @@ def build_list_cards(b):
                 areas = [area for area in areas if area not in own]
                 if event_id in spec.get('copies', ()):  # a crossover (Trial) card hangs the game without its solo area
                     areas = copy_areas(cid, event_id, areas)
+            elif event_id in spec.get('copies', ()):
+                # its own card stays with every area (its page, and the ticket exchange on it); the list gets copies
+                stays.add(event_id)
+                areas = copy_areas(cid, event_id, areas)
             if areas:                                  # an event with nothing to play is left out
                 held[event_id] = areas
         members = b.newest_first(held)
@@ -539,8 +544,9 @@ def build_escalation_cards(b):
 # ---------------------------------------------------------------- co-op as solo
 # Co-op fights (m_event_multi_battle) ran on Square's battle server, so with "coop_as_solo" (gameplay-settings.json,
 # on unless false) each event's co-op area becomes a solo area: an entry on its list card's co-op card (the list
-# card's "coop"), else after the event's last solo area, on its own page when that is shown, else on the list card
-# its areas moved to (Escalation's on the Escalation Co-op card). It has
+# card's "coop"), else after the event's last solo area: after its copy on the list card for an event copied there
+# without "stories" (Critical Threats), else on its own page when that is shown, else on the list card its areas moved
+# to (Escalation's on the Escalation Co-op card). It has
 # the co-op area's display and lock, and one stage per co-op battle in difficulty order, paying the battle's
 # first-clear reward. Stage ids stay in the event's range (event * 1000 + 801...) for its missions. The co-op
 # originals, which the server refuses, are hidden (display condition HIDDEN on every co-op area and battle).
@@ -648,6 +654,7 @@ def build_coop_solo(b):
         areas_of.setdefault(owner.get(area[1]), []).append(live[area[0]])
     with_coop = {f[2] for f in b.source('m_event_multi_battle')}
     on_coop_card = coop_cards(b, with_coop, stock_events)
+    copied = {e for spec in b.recipe.get('list_cards', ()) if not spec.get('stories') for e in spec.get('copies', ())}
     for event_id, area_id in sorted({(f[2], f[23]) for f in b.source('m_event_multi_battle')}):
         if event_id in b.coop_done or event_id not in stock_events or not areas_of.get(event_id):
             continue
@@ -661,7 +668,10 @@ def build_coop_solo(b):
             coop_solo(b, event_id, area, 98000000 + event_id * 10, last, cid, position, cid, label)
             continue
         home = [a for a in areas_of[event_id] if groups[a[1]][1] == event_id]
-        if home and events[event_id][5] != HIDDEN:     # its own page is shown: there, where its co-op tab was
+        if event_id in copied:                         # on the list after its copy, as before its own card came back
+            on_card = [live[a] for a in sorted({st[2] for st in b.tables['m_event_solo_battle']
+                                                if st[0] // 1000 == event_id and st[0] % 1000 > 900})]
+        elif home and events[event_id][5] != HIDDEN:   # its own page is shown: there, where its co-op tab was
             on_card = []
         else:
             on_card = [a for a in areas_of[event_id] if 9900 <= groups[a[1]][1] < 10000]

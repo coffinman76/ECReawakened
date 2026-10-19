@@ -10,7 +10,8 @@ import secrets
 import shutil
 import subprocess
 
-TEMPLATE_FILES = frozenset(('new-account.json', 'tutorial-register.json', 'tutorial-skip.json'))
+TEMPLATE_FILES = frozenset(('new-account.json', 'tutorial-register.json', 'tutorial-skip.json',
+                            'fresh.pb', 'fresh.json'))   # the last two: older builds' recorded template, still moved if found
 ENGINE_DATA_FILES = frozenset(('tablekeys.json', 'materia.json', 'lineups.json', 'laps.json'))
 
 def home():
@@ -46,6 +47,10 @@ def path(*parts, root=None, legacy_fallback=True):
                 new = root.joinpath("gameassets", "language", *tail)
             else:
                 new = root.joinpath("gameassets", "masterdata", *tail)
+        elif tail and tail[0] == "assets.list":
+            new = root.joinpath("gameassets", "fileindex", "steam", "368", "catalog.pb")
+        elif tail and tail[0] == "objects":
+            new = root.joinpath("gameassets", "blobs", "steam", "368", *tail[1:])
         elif tail and tail[0] == "web":
             relative = Path(*tail[1:])
             new = root.joinpath("gameassets", "notice-media", relative.name)
@@ -135,7 +140,8 @@ def migrate(root=None):
             raise FileExistsError("Both saves and accounts exist; refusing to merge personal state")
         (root / "saves").rename(root / "accounts")
         moved += 1
-    for folder in ("masterdata", "language", "notice-media"):
+    for folder in ("fileindex/ingest/steam", "fileindex/ingest/android", "fileindex/ingest/ios", "blobs", "masterdata", "language",
+                   "notice-media"):
         (root / "gameassets" / folder).mkdir(parents=True, exist_ok=True)
     (root / "engine" / "account-templates").mkdir(parents=True, exist_ok=True)
     (root / "engine" / "data").mkdir(parents=True, exist_ok=True)

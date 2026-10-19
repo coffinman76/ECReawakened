@@ -211,7 +211,10 @@ class Launcher:
                     self._say(f'Migrated {result["moved"]} legacy data items.')
                 result = self._command('ingest-folder')
                 for catalog in result['imported']:
-                    self._say(f'Imported {catalog["platform"]} r{catalog["revision"]}.')
+                    where = f' from {catalog["source"]}' if catalog.get('source') else ''
+                    self._say(f'Imported {catalog["platform"]} r{catalog["revision"]} asset index{where}.')
+                for note in result.get('notes', ()):
+                    self._say(f'Asset index not imported: {note}.')
             else:
                 self._say('Another server is using port 443. Stop it before starting this server.')
             self._data_ready = True
@@ -290,7 +293,8 @@ class Launcher:
         if not selected:
             return
         destination = Path(selected if isinstance(selected, str) else selected[0])
-        files = [p for p in self._logs.rglob('*') if p.is_file() and p.name != 'stop.flag']
+        # skip earlier saved zips so each one doesn't carry the last
+        files = [p for p in self._logs.rglob('*') if p.is_file() and p.name != 'stop.flag' and p.suffix.lower() != '.zip']
         game = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))).parent / 'LocalLow' / 'SquareEnix' / 'FF7EC'
         for name in ('Player.log', 'Player-prev.log'):
             if (game / name).is_file():

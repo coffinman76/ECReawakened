@@ -1,5 +1,5 @@
 """HTTPS service for the game's hostnames, available to this PC and its LAN."""
-import json, logging, os, random, re, socket, ssl, threading, time, uuid
+import hashlib, json, logging, os, random, re, socket, ssl, threading, time, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from engine import storage
@@ -10,7 +10,7 @@ HOME = os.environ.get("EC_HOME") or os.getcwd()
 log = logging.getLogger("svc")
 
 HOSTS = ["game-q74z3cyn.app.gl.ffviiec.com", "resources-api-c9ps53g2.app.gl.ffviiec.com",
-         "client-masterdata-c9ps53g2.app.gl.ffviiec.com",
+         "resources-data-w6d4k7cz.app.gl.ffviiec.com", "client-masterdata-c9ps53g2.app.gl.ffviiec.com",
          "chat-pd381ne.app.gl.ffviiec.com", "webview-w62j4u3y.app.gl.ffviiec.com"]
 # Names the game calls that are not its servers: its built-in crash reporter (Bugsnag, on the publisher's account)
 # asks for these on every launch. While the service runs they get a hosts line to 0.0.0.0, so the game cannot reach them.
@@ -53,6 +53,18 @@ class Data:
                 self.catalog, extra = seasons.build(HOME, sid); self.paths.update(extra)
                 log.info("season pass %d: open", sid)
         except Exception as e: log.error("season pass: not opened (%r); the game shows none", e)
+        from engine.catalogs import load
+        self.registry = load(HOME)
+        if not self.registry.catalogs:
+            log.info('No asset index imported; running without local Octo asset serving.')
+        steam = next((c for c in self.registry.catalogs.values() if c.platform == 'steam'), None)
+        self.assets = steam.data if steam else b''
+        self.md5 = self.registry.objects
+        self.rev, self.asset_url = (steam.revision, steam.url_format.encode()) if steam else (0, b'')
+        try:
+            with open(p("gamedata", "source.txt"), encoding="utf-8") as source:
+                self.source = source.read().strip().rstrip("/") or None
+        except OSError: self.source = None
         self.responses = responses.ServiceResponses(HOME, self.paths[self.catalog])
         log.info("data: generated API responses, %d table paths, catalog %s", len(self.paths), self.catalog)
 
@@ -87,6 +99,45 @@ class Data:
         for k, v in served_paths.items():
             m[k] = p('gamedata', 'live', *v.replace('\\', '/').split('/'))
         return m
+
+
+def _pb_fields(b):
+    """(field, value) pairs of one protobuf message: varints as int, length-delimited as bytes, fixed as bytes."""
+    i, out = 0, []
+    while i < len(b):
+        k, i = _varint_at(b, i); f, w = k >> 3, k & 7
+        if w == 0: v, i = _varint_at(b, i); out.append((f, v))
+        elif w == 2: n, i = _varint_at(b, i); out.append((f, b[i:i + n])); i += n
+        elif w == 1: out.append((f, b[i:i + 8])); i += 8
+        elif w == 5: out.append((f, b[i:i + 4])); i += 4
+        else: raise ValueError(f"wire type {w}")
+    return out
+
+
+def _varint_at(b, i):
+    r = s = 0
+    while True:
+        c = b[i]; i += 1; r |= (c & 0x7F) << s; s += 7
+        if not c & 0x80: return r, i
+
+
+def asset_md5s(raw):
+    """object name -> md5 for every entry of the asset list (fields 2 and 4 hold entries; 10 md5, 11 object)."""
+    out = {}
+    for f, v in _pb_fields(raw):
+        if f in (2, 4):
+            d = dict(_pb_fields(v))
+            if 10 in d and 11 in d: out[d[11].decode()] = d[10].decode()
+    return out
+
+
+def asset_head(raw):
+    """(revision, download address pattern) of the asset list: its fields 1 and 5."""
+    rev, url = 0, b""
+    for f, v in _pb_fields(raw):
+        if f == 1 and isinstance(v, int): rev = v
+        elif f == 5 and isinstance(v, bytes): url = v
+    return rev, url
 
 
 def _varint(n):
@@ -231,6 +282,7 @@ class Handler(BaseHTTPRequestHandler):
             if host not in HOSTS: return self._send(404, {}, b'')
             if host.startswith(("game-", "chat-")): return self._api(path, body)
             if host.startswith("resources-api"): return self._resources(path)
+            if host.startswith("resources-data"): return self._object(path)
             if host.startswith("client-masterdata"): return self._tables(path)
             if host.startswith("webview-"): return self._web(path)
         except GONE:
@@ -341,16 +393,94 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- files ----------------------------------------------------------------------------------------------------
     def _resources(self, path):
-        """Acknowledge completed installs without serving an Octo index or blobs."""
-        parts = path.strip('/').split('/')
-        revision = {'323173179': 368, '223173179': 493, '123173170': 492}.get(parts[2] if len(parts) >= 3 else '')
-        revision_check = len(parts) == 3 and parts[:2] == ['v1', 'revision']
-        current_list = len(parts) == 4 and parts[:2] == ['v1', 'list'] and parts[3] == str(revision)
-        if revision is not None and (revision_check or current_list):
-            self._note('REVISION' if revision_check else 'LIST', f'installed client r{revision}; asset hosting disabled')
-            return self._send(200, {'Content-Type': 'application/x-protobuf'}, b'\x08' + _varint(revision))
-        self._note('MISSING', 'ECR requires a completed game installation; asset downloads are not provided')
-        return self._send(404, {}, b'')
+        # The game asks which revision of the asset list is current, then for the list as of the revision it holds.
+        # Both answers come from the list this service has: the revision is the list's own, a game holding that
+        # revision is told it is up to date, and a game holding any other gets the whole list. (Recorded answers
+        # name the revision of the day they were recorded, which a newer list no longer matches.)
+        parts = path.strip("/").split("/"); pb = {"Content-Type": "application/x-protobuf"}
+        if parts[:2] not in (['v1', 'revision'], ['v1', 'list']) or len(parts) < 3:
+            return self._send(404, {}, b'')
+        d = self.data.registry.get(parts[2])
+        if d is None:
+            # Completed installs still check Octo even when no local index is supplied.
+            # Only acknowledge the known final revision; never invent a full index.
+            final_revision = {'323173179': 368, '223173179': 493, '123173170': 492}.get(parts[2])
+            if final_revision is not None:
+                revision_check = parts[:2] == ['v1', 'revision'] and len(parts) == 3
+                current_list = parts[:2] == ['v1', 'list'] and len(parts) == 4 and parts[3] == str(final_revision)
+                if revision_check or current_list:
+                    self._note('REVISION' if revision_check else 'LIST', f'installed client r{final_revision}; no local index')
+                    return self._send(200, pb, b'\x08' + _varint(final_revision))
+                self._note('MISSING', 'client needs an asset index; none supplied')
+                return self._send(404, {}, b'')
+            self._note('UNKNOWN', 'platform ' + parts[2]); return self._send(404, {}, b'')
+        if parts[:2] == ["v1", "revision"] and len(parts) == 3:
+            self._note("REVISION", f'{d.platform} r{d.revision}'); return self._send(200, pb, b"\x08" + _varint(d.revision))
+        if parts[:2] == ["v1", "list"] and len(parts) == 4 and parts[3] == str(d.revision):
+            self._note("LIST", "up to date")
+            url = d.url_format.encode()
+            return self._send(200, pb, b"\x08" + _varint(d.revision) + b"\x2a" + _varint(len(url)) + url)
+        if parts[:2] == ["v1", "list"] and len(parts) == 4 and parts[3].isdecimal():
+            self._note("LIST", f'{d.platform} full r{d.revision}'); return self._send(200, pb, d.data)
+        self._note("MISSING"); self._send(404, {}, b"")
+
+    _miss = {}      # object -> time the source last had nothing: quiet 404s for 10 min instead of a retry storm
+    _verified = {}
+
+    def _object(self, path):
+        obj = path.strip("/")
+        if obj.startswith('o/'): obj = obj[2:]
+        if not re.fullmatch(r"[A-Za-z0-9]{1,16}", obj): return self._send(404, {}, b"")
+        want = self.data.md5.get(obj)
+        from engine.files import find_blob, blob_dir
+        catalogs = self.data.registry.locations.get(obj, [])
+        if not want: return self._send(404, {}, b'')
+        f = os.path.join(blob_dir(catalogs[0]), want)
+        for catalog in catalogs:
+            g = find_blob(catalog, obj, want)
+            if not g: continue
+            with open(g, 'rb') as file:
+                stat = os.fstat(file.fileno()); signature = (stat.st_mtime_ns, stat.st_size)
+                if Handler._verified.get((g, want)) != signature:
+                    if hashlib.file_digest(file, 'md5').hexdigest() != want: continue
+                    Handler._verified[g, want] = signature
+                file.seek(0)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Length', str(stat.st_size)); self.end_headers()
+                import shutil
+                shutil.copyfileobj(file, self.wfile, 256 * 1024)
+                self._note('FILE', f'{stat.st_size}B'); return
+        src = self.data.source
+        if src and want and time.time() - Handler._miss.get(obj, 0) > 600:
+            data = self._fetch(f"{src}/o/{obj}")
+            if data is not None and hashlib.md5(data).hexdigest() == want:
+                os.makedirs(os.path.dirname(f), exist_ok=True)
+                tmp = f"{f}.{uuid.uuid4().hex}.part"
+                with open(tmp, "wb") as h: h.write(data)
+                os.replace(tmp, f)
+                self._note("FETCHED", f"{len(data)}B, kept by MD5")
+                return self._send(200, {"Content-Type": "application/octet-stream"}, data)
+            Handler._miss[obj] = time.time()
+            self._note("MISSING", f"{obj}: source gave {'nothing' if data is None else 'a file with the wrong md5'}")
+            return self._send(404, {}, b"")
+        self._note("MISSING", obj if want else f"{obj} (not in the asset list)"); self._send(404, {}, b"")
+
+    @staticmethod
+    def _fetch(url):
+        """One file from the asset source, or None. Only another ECR on this network (a private IPv4 address, as the
+        Android app's PC mirror sets): nothing is ever downloaded from the internet. Plain https with the system's
+        roots (not our CA)."""
+        import ipaddress, urllib.parse, urllib.request, urllib.error
+        try: address = ipaddress.ip_address(urllib.parse.urlsplit(url).hostname or "")
+        except ValueError: return None
+        if not isinstance(address, ipaddress.IPv4Address) or not address.is_private or address.is_loopback: return None
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "EC-Local/1.0"}), timeout=60) as r:
+                d = r.read()
+                return d if r.status == 200 and d else None
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            log.info("fetch %s: %r", url, e); return None
 
     def _tables(self, path):
         key = path.split("/prd", 1)[-1] if "/prd" in path else path
