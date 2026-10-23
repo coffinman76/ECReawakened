@@ -8,13 +8,15 @@
     python -m engine.cli use <id>         play this account
     python -m engine.cli new              start a new account and play it
     python -m engine.cli import <file> [--replace]
+    python -m engine.cli export <id> <file>
+                                          write an account as an account export, the reverse of import
     python -m engine.cli remove <id>      take an account off the list; its folder moves to accounts/removed, not deleted
     python -m engine.cli prepare-client-data [--game <folder>]...
                                           find and import complete local MasterData and LocalizeText
-    python -m engine.cli seasons          the season passes the window offers, and the one picked
+    python -m engine.cli seasons          the season passes and old guild battles the window offers, and the ones picked
 """
 import json, logging, logging.handlers, os, re, shutil, signal, sys, threading, time
-from engine import storage
+from engine import edition, storage
 
 HOME = os.environ.setdefault("EC_HOME", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(HOME)
@@ -164,10 +166,15 @@ def cmd_serve(parent_pid=0, bind='0.0.0.0', port=443, system_setup=True):
         if getattr(error, 'using', None): log.error('client data: %s', error.using)
         log.error('could not start: %s', error)
         sys.exit(1)
-    ca, crt, key = certs.ensure(os.path.join(HOME, "certs"), net.HOSTS)
-    sdk_ca, sdk_folder = certs.ensure_sdk(os.path.join(HOME, 'certs'))
+    made = edition.call('certificates', os.path.join(HOME, "certs"), net.HOSTS, log, system_setup)
+    if made:
+        trusted, crt, key, sdk_folder = made
+    else:
+        ca, crt, key = certs.ensure(os.path.join(HOME, "certs"), net.HOSTS)
+        sdk_ca, sdk_folder = certs.ensure_sdk(os.path.join(HOME, 'certs'))
+        trusted = (ca, sdk_ca)
     if system_setup:
-        for certificate in (ca, sdk_ca):
+        for certificate in trusted:
             ok, msg = certs.trust(certificate)
             if not ok:
                 log.error('could not trust the certificate: %s', msg); sys.exit(2)
@@ -190,6 +197,12 @@ def cmd_serve(parent_pid=0, bind='0.0.0.0', port=443, system_setup=True):
             for n in notes: log.warning('asset index: %s', n)
             log.info('saved asset list: %s', saved_list(select('steam', HOME).data))
         except Exception as e: log.error("saved asset list: %r", e)
+        try:    # tables the game kept from another server's changed copies: it downloads them again (engine\mastercache.py)
+            from engine import localsave, mastercache
+            for folder, dropped in mastercache.refresh_all(localsave._documents()).items():
+                if isinstance(dropped, Exception): log.error("saved master data: %s not checked (%r)", folder, dropped)
+                else: log.info("saved master data: the game downloads %s again (%s)", ", ".join(dropped), folder)
+        except Exception as e: log.error("saved master data: not checked (%r)", e)
     stop = threading.Event()
     for s in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
         if s is not None: signal.signal(s, lambda *_: stop.set())
@@ -208,6 +221,7 @@ def cmd_serve(parent_pid=0, bind='0.0.0.0', port=443, system_setup=True):
             n = certs.hosts(True, names, blocked=net.BLOCKED)
             if n: log.info('hosts: %d conflicting lines; ours are above them', n)
             log.info('LAN addresses: %s', ', '.join(network.lan_addresses()) or 'none detected')
+            edition.call('ready', log, network.lan_addresses())
         log.info("ready: start the game")
         flag = os.path.join(HOME, "logs", "stop.flag")
         if os.path.exists(flag): os.remove(flag)
@@ -289,6 +303,17 @@ def cmd_import(path, replace):
     out(ok=True, id=uid, name=c["name"], gifts=len(c["gifts"]))
 
 
+def cmd_export(uid, path):
+    from engine import intake
+    s = saves()
+    if not s.exists(uid): out(ok=False, error=f"No account {uid}."); return
+    d = intake.export(os.path.join(s.root, uid))
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f: json.dump(d, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+    out(ok=True, id=uid, path=path)
+
+
 def cmd_remove(uid):
     from engine.account_storage import remove_account
     out(**remove_account(saves(), uid))
@@ -300,7 +325,9 @@ def cmd_remove(uid):
 
 def cmd_seasons():
     from engine import seasons
-    out(ok=True, chosen=seasons.chosen(HOME), seasons=seasons.listing(HOME))
+    out(ok=True, chosen=seasons.chosen(HOME), seasons=seasons.listing(HOME),
+        guild_battle=seasons.chosen_guild_battle(HOME), guild_battles=seasons.guild_listing(HOME),
+        farm_visitor=seasons.chosen_farm_visitor(HOME), farm_visitors=seasons.farm_listing(HOME))
 
 
 def prepare_client_data(game_folders=(), documents=None):
@@ -343,6 +370,7 @@ def main():
     if not a: print(__doc__); sys.exit(1)
     def option(name, default):
         return a[a.index(name) + 1] if name in a else default
+    if edition.call('command', a, out, default=False): return
     if a[0] == 'migrate-data':
         from engine import net, localsave
         if net.port_taken(): raise RuntimeError('Stop the server before migrating data')
@@ -355,7 +383,7 @@ def main():
     if a[0] == 'network':
         from engine import network, net
         return out(ok=True, addresses=network.lan_addresses(), hosts=net.HOSTS + [net.SDK_HOST],
-                   port=443, certificates=['certs/ca.cer', 'certs/sdk-ca.cer'])
+                   port=443, certificates=edition.call('certificate_files', default=['certs/ca.cer', 'certs/sdk-ca.cer']))
     if a[0] == "serve":
         return cmd_serve(int(option('--parent', '0')), option('--bind', '0.0.0.0'), int(option('--port', '443')), '--no-system-setup' not in a)
     if a[0] == 'prepare-client-data':
@@ -369,7 +397,9 @@ def main():
             folder = Path(HOME) / 'gameassets' / 'fileindex' / 'ingest' / platform
             for file in sorted(folder.glob('*')):
                 if file.is_file() and (file.name == 'octocacheevai' or file.suffix.lower() == '.pb'):
-                    imported.append(ingest(platform, file, HOME))
+                    result = ingest(platform, file, HOME, skip_unchanged=True)
+                    if not result.get('unchanged'):
+                        imported.append(result)
         notes = []
         return out(ok=True, imported=imported + installed_index(notes), notes=notes)
     if a[0] == 'fetch-client-data':
@@ -381,6 +411,7 @@ def main():
     if a[0] == "use" and len(a) == 2: return cmd_use(a[1])
     if a[0] == "new": return cmd_new()
     if a[0] == "remove" and len(a) == 2: return cmd_remove(a[1])
+    if a[0] == "export" and len(a) == 3: return cmd_export(a[1], a[2])
     if a[0] == "import" and len(a) >= 2: return cmd_import(a[1], "--replace" in a[2:])
     print(__doc__); sys.exit(1)
 

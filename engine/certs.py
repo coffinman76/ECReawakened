@@ -3,7 +3,7 @@
 Each PC makes its own two CAs, once: one for the game's ffviiec.com hosts and one for the mobile SDK host, each
 limited to those names. Their private keys (ca.pem, sdk-ca.pem) stay in certs/ and are never shipped, so no two
 installs share a key. The Android build keeps its fixed bundle in android/certs (its patched game trusts that CA)."""
-import datetime, os, subprocess, time
+import datetime, os, subprocess, sys, time
 
 HOSTS_TAG = "# ec-local"
 # SHA-1 thumbprints of the game and SDK CAs every Windows install shipped from 2026-10-08 to 2026-10-14. Their server
@@ -121,7 +121,9 @@ def hosts(install, names, ip="127.0.0.1", blocked=()):
     holds the file.
     -> how many lines of other programs name the same hosts. Windows uses the first line that names a host, so ours
     go at the top: put at the end they lose to such a line and the game never reaches this PC's service. Other
-    programs' lines are left as they are, and count again once ours are out."""
+    programs' lines are left as they are, and count again once ours are out.
+    Not on a Mac: there is no local game to redirect (a Mac serves phones only), and /etc/hosts needs root."""
+    if sys.platform == "darwin": return 0
     f = hosts_file(); last = None; others = 0
     for _ in range(15):
         try:

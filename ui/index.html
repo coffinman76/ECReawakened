@@ -10,21 +10,23 @@
 </head>
 <body>
 <main>
-  <header><h1>Ever Crisis: Reawakened</h1></header>
+  <header><h1>Ever Crisis: Reawakened</h1><span id="region" class="region"></span></header>
   <fieldset><legend>1. Your account</legend>
     <div class="account-grid">
       <select id="accounts" size="4" aria-label="Accounts"></select>
-      <div class="stack"><button data-action="import_account">Import JSON…</button><button data-action="new">New account</button><button id="use" data-action="use">Switch account</button><button id="remove" data-action="remove">Remove account…</button></div>
+      <div class="stack"><button data-action="import_account">Import JSON…</button><button id="export" data-action="export_account">Export JSON…</button><button data-action="new">New account</button><button id="use" data-action="use">Switch account</button><button id="remove" data-action="remove">Remove account…</button></div>
     </div>
     <p class="hint">The account marked ▶ is the one you play.</p>
   </fieldset>
   <fieldset><legend>2. Reawakened connection</legend>
     <div class="server-row"><button id="start" data-action="start">Start</button><button id="stop" data-action="stop" disabled>Stop</button><span id="server-state" role="status">Stopped</span></div>
     <div class="label-row"><label for="season">Season pass</label><select id="season"><option value="0">None (all ended)</option></select></div>
+    <div class="label-row"><label for="guild-battle">Guild battle</label><select id="guild-battle"><option value="0">None (all ended)</option></select></div>
+    <div class="label-row"><label for="farm-visitor">Chocobo farm visitor</label><select id="farm-visitor"><option value="0">Default (Mog)</option></select></div>
     <div class="label-row"><label for="ip">LAN IP</label><div class="split"><select id="ip" aria-label="Server LAN IP"></select><details id="connection"><summary>Connection options</summary><div class="menu"><button id="dns">Copy DNS rewrites</button><button data-action="refresh_network">Refresh IP addresses</button></div></details></div></div>
   </fieldset>
-  <fieldset><legend>3. Steam game</legend>
-    <div class="server-row"><button id="play" data-action="play" disabled>Play</button><button id="protect" data-action="protect">Protect…</button><button id="use-copy" data-action="use_copy">Use a copy…</button></div>
+  <fieldset><legend id="game-legend">3. Steam game</legend>
+    <div id="steam-row" class="server-row"><button id="play" data-action="play" disabled>Play</button><button id="protect" data-action="protect">Protect…</button><button id="use-copy" data-action="use_copy">Use a copy…</button></div>
     <p id="game-info" class="hint">Finding game…</p>
     <div class="split client-data-row"><button id="client-data-find" data-action="find_client_data">Find MasterData &amp; LocalizeText</button><button id="client-data-source" data-action="choose_client_data">Choose folder…</button></div>
     <p id="client-data-folder" class="hint"></p>
@@ -34,5 +36,8 @@
   <footer><span id="operation" role="status">Setting up…</span><button data-action="save_logs">Save logs</button></footer>
   <button data-action="open_data">Open data folder</button><p id="data-folder" class="hint"></p>
 </main>
+<div id="busy" class="busy" role="status" aria-live="polite" hidden>
+  <div class="busy-box"><div class="spinner" aria-hidden="true"></div><p id="busy-title">Setting up…</p><p id="busy-detail" class="hint"></p></div>
+</div>
 </body>
 </html>

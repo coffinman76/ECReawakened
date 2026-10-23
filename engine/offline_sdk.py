@@ -1,4 +1,4 @@
-"""Offline initialization response for the LevelPlay 8.10.0 SDK in Android 4.0.10.
+"""Offline initialization response for the LevelPlay 8.10.0 SDK in the 4.0.10 clients (Android; iOS answered the same).
 
 This only supplies an empty provider configuration. It does not serve ads or rewards.
 The SDK's installed Java parser has accepted this configuration in an isolated probe.
@@ -16,6 +16,8 @@ SDK_HOST = "i-sdk.mediation.unity3d.com"
 SDK_PATH = "/sdk/v8.10.0"
 # This is the SDK's protocol constant, not an account credential.
 SDK_KEY = b"C38FB23A402222A0C17D34A92F971D1F"
+KNOWN_APP_KEYS = {"1a08eaaa5", "1a08e711d"}   # Android, iOS
+_seen = set()
 CONFIG = {"providerOrder": {}, "providerSettings": {}, "configurations": {
     "adUnits": {}, "application": {name: {} for name in (
         "events", "loggers", "token", "segment", "auction", "crashReporter", "settings", "external")}}}
@@ -41,9 +43,15 @@ def initialization_response(method, target):
             query = parse_qs(decoded.decode("utf-8"), keep_blank_values=True)
         except (ValueError, UnicodeError):
             return 400, headers, b"{}"
-    # Restrict this endpoint to the preserved game application.
-    if query.get("applicationKey") != ["1a08eaaa5"]:
+    # The game's application key on Android; the iOS client uses its own, accepted too and logged once by its value
+    # (an app identifier, not a device or account value) so it can be listed here.
+    key = (query.get("applicationKey") or [""])[0]
+    if not key or len(key) > 32 or not key.isalnum():
         return 400, headers, b"{}"
+    if key not in KNOWN_APP_KEYS and key not in _seen:
+        _seen.add(key)
+        import logging
+        logging.getLogger("svc").info("SDK      application key %s (not the Android one); answered the same", key)
     mode = query.get("serr", ["1"])
     if mode not in (["0"], ["1"]):
         return 400, headers, b"{}"

@@ -1,4 +1,5 @@
 {
+ "region": "gl",
  "materia": {
   "quality_up_chance": 0.15,
   "extra_param_chance": 0.5,
@@ -8,11 +9,19 @@
  "rare_wave_chance": 0.25,
  "minor_guild_medals_per_stamina": 10,
  "coop_medals_per_stamina": 1,
+ "crisis_medals_per_stamina": 1,
+ "guild_medals_per_stamina": 1,
+ "guild_rare_medals_per_stamina": 0.25,
+ "guild_login_animation": false,
  "coop_as_solo": true,
+ "detailed_logging": false,
  "memoria_crystal_odds": [12, 25, 27, 18, 10, 5, 3],
  "memoria_crystal_odds_boost": 9,
  "memoria_complete_crystal_chance": 0.12,
  "uncapped_items": [
-  52
- ]
+  52,
+  13
+ ],
+ "notices": [{"title": "EoS", "type": "Info", "date": "2026-10-12 21:27",
+  "body": ["This is Jeremy from FINAL FANTASY VII EVER CRISIS SUPPORT TEAM.", "", "EoS has been delayed indefinitely.", "", "Thank you for your continued support of FINAL FANTASY VII EVER CRISIS."]}]
 }

@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let state = null, sequence = 0, operating = false, logLines = [];
+const extensions = [];     // render(state, busy) of an edition's page script (pro/ui, mobile/ui), run after render
 
 function log(text) {
   logLines.push(text);
@@ -31,14 +32,21 @@ function render() {
   $('use').hidden = state.accounts.length < 2;
   $('use').disabled = busy || state.game_running || !$('accounts').value;
   $('remove').hidden = !state.accounts.length;
+  $('export').hidden = !state.accounts.length;
+  $('export').disabled = busy || !$('accounts').value;
   $('remove').disabled = busy || state.running || state.game_running || !$('accounts').value;
   $('data-folder').textContent = state.data_folder || '';
   $('server-state').textContent = state.server;
+  $('region').textContent = `Region: ${state.region === 'jp' ? 'Japan' : 'Global'}`;
   $('start').disabled = busy || state.running || !state.client_data.ready;
   $('stop').disabled = busy || !state.running;
   $('play').disabled = busy || !state.ready || state.game_running;
   options($('season'), [['0', 'None (all ended)'], ...state.seasons.map(s => [String(s.id), s.label])], state.season);
   $('season').disabled = busy || state.running;
+  options($('guild-battle'), [['0', 'None (all ended)'], ...state.guild_battles.map(g => [String(g.id), g.label])], state.guild_battle);
+  $('guild-battle').disabled = busy || state.running;
+  options($('farm-visitor'), [['0', 'Default (Mog)'], ...(state.farm_visitors || []).map(v => [String(v.id), v.label])], state.farm_visitor || '0');
+  $('farm-visitor').disabled = busy || state.running;
   const currentIP = $('ip').value;
   options($('ip'), state.network.addresses.map(ip => [ip, ip]), state.network.addresses.includes(currentIP) ? currentIP : state.network.addresses[0]);
   $('game-info').textContent = state.game;
@@ -53,6 +61,17 @@ function render() {
   $('use-copy').textContent = state.copy ? 'Change folder…' : 'Use a copy…';
   $('use-copy').disabled = busy || state.running || state.game_running;
   $('operation').textContent = !state.data_ready ? 'Setting up…' : busy ? 'Working…' : '';
+  $('busy').hidden = !busy || state.platform === 'darwin';     // Mac: no overlay, so a stalled or failed setup shows its log
+  if (busy) {
+    $('busy-title').textContent = !state.data_ready ? 'Setting up Reawakened…'
+      : state.client_data.running ? 'Checking game data…' : 'Working…';
+    $('busy-detail').textContent = (logLines[logLines.length - 1] || '').slice(0, 160);
+  }
+  const steamGame = !state.platform || state.platform === 'win32';     // the Steam game runs on Windows only
+  $('steam-row').hidden = !steamGame;
+  $('game-info').hidden = !steamGame;
+  $('game-legend').textContent = steamGame ? '3. Steam game' : '3. Game data';
+  for (const extend of extensions) extend(state, busy);
 }
 
 async function refresh() {
@@ -77,11 +96,13 @@ for (const button of document.querySelectorAll('[data-action]')) {
   button.addEventListener('click', () => {
     $('connection').open = false;
     const name = button.dataset.action;
-    act(name, ['use', 'remove'].includes(name) ? $('accounts').value : null);
+    act(name, ['use', 'remove', 'export_account'].includes(name) ? $('accounts').value : null);
   });
 }
 $('accounts').addEventListener('change', render);
 $('season').addEventListener('change', () => act('season', $('season').value));
+$('guild-battle').addEventListener('change', () => act('guild_battle', $('guild-battle').value));
+$('farm-visitor').addEventListener('change', () => act('farm_visitor', $('farm-visitor').value));
 $('dns').addEventListener('click', async () => {
   $('connection').open = false;
   if (!$('ip').value || !state) { log('No LAN address found. Connect to your local network and refresh IP addresses.'); return; }

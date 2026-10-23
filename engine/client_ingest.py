@@ -177,6 +177,9 @@ class _Candidate:
 
 def _documents():
     """Use the real Windows Documents known folder, including OneDrive redirects."""
+    import sys
+    if sys.platform == 'darwin':
+        return []            # Mac build: nothing to find there, and reading Documents triggers a permission prompt
     folders = []
     if os.name == 'nt':
         try:

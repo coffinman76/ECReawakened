@@ -16,6 +16,17 @@ def lan_addresses():
                 addresses.add(str(address))
     except OSError:
         pass
+    if not addresses:
+        # The address the system would use to reach the internet; a UDP "connect" sends nothing. macOS often
+        # resolves its own name to no LAN address, so this is how a Mac finds what phones should use.
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(('192.0.2.1', 9))           # TEST-NET-1: never routed anywhere, only used to pick a route
+                address = ipaddress.ip_address(s.getsockname()[0])
+            if address.is_private and not (address.is_loopback or address.is_link_local or address.is_unspecified):
+                addresses.add(str(address))
+        except OSError:
+            pass
     return sorted(addresses)
 
 

@@ -46,7 +46,7 @@ if __name__ == '__main__':
         (ROOT / 'logs').mkdir(exist_ok=True)
         logging.basicConfig(filename=ROOT / 'logs' / 'launcher.log', level=logging.ERROR)
         logging.exception('Launcher failed')
-        message = f'{error}\n\nSee logs/launcher.log. Install Microsoft Edge WebView2 Runtime if it is missing.'
+        message = f'{error}\n\nSee logs/launcher.log.' + (' Install Microsoft Edge WebView2 Runtime if it is missing.' if os.name == 'nt' else '')
         if os.name == 'nt':
             ctypes.windll.user32.MessageBoxW(None, message, 'Ever Crisis: Reawakened could not start', 0)
         else:

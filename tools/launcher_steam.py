@@ -151,6 +151,11 @@ class Steam:
         print(scoreboss.patch_battle_end(folder), flush=True)
         # Max Damage Challenge: fight in the game, not on Square's battle server, and send the damage to the server.
         print(scoreboss.patch_damage_challenge(folder), flush=True)
+        # Victory Draw: the list opens the draw that was tapped, also once it scrolls (one list of every draw).
+        print(scoreboss.patch_box_gacha_select(folder), flush=True)
+        print(scoreboss.patch_box_gacha_highlight(folder), flush=True)
+        # Guild Battle: mock fights in the game, not on Square's battle server, and send the damage to the server.
+        print(scoreboss.patch_guild_practice(folder), flush=True)
         if (folder / 'GameAssembly.dll').is_file():
             self.state['battle_server_patch'] = patch_battle_server(folder)
             self.save()

@@ -133,6 +133,29 @@ class Catalog:
         return self._entries
 
     @cached_property
+    def local_keys(self):
+        """object name -> the key a game client caches it under: 'A<id>' for asset bundles, 'R<id>' for resources
+        (folder octo/v1/<app>/<last digit>/<hex of the key>/<md5> in an installed client, see files.py)."""
+        out = {}
+        for field, wire, value, _ in fields(self.data):
+            if field in (2, 4) and wire == 2:
+                item = {k: v for k, _, v, _ in fields(value)}
+                if isinstance(item.get(1), int) and 11 in item:
+                    out[item[11].decode('ascii')] = ('A' if field == 2 else 'R') + str(item[1])
+        return out
+
+    @cached_property
+    def md5_keys(self):
+        """md5 -> the client cache keys holding that content. Phones and Steam list the same sound and video files
+        under different ids, so a phone's file can be found in Steam's cache by its checksum."""
+        out = {}
+        for obj, key in self.local_keys.items():
+            md5 = self.md5s.get(obj)
+            if md5:
+                out.setdefault(md5.lower(), []).append(key)
+        return out
+
+    @cached_property
     def _entries(self):
         out = {}
         for field, wire, value, _ in fields(self.data):
@@ -196,7 +219,50 @@ class CatalogRegistry:
         return cls(catalogs)
 
 
-DEFAULT_IDS = {'steam': '323173179', 'android': '223173179', 'ios': '123173170'}
+# The platform ids the clients put in their Octo requests (/v1/list/<id>/...), as recorded from each client.
+DEFAULT_IDS = {'steam': '323173179', 'android': '223173179', 'ios': '123173179'}
+
+# File-serving options in gameassets/fileindex/platforms.json (all optional).
+#   "steam_cache": true     serve files from the installed game client's own download cache (default on)
+SETTING_DEFAULTS = {'steam_cache': True}
+
+
+def _platforms_json(root):
+    from engine import storage
+    root = Path(root) if root is not None else storage.home()
+    return root, root / 'gameassets' / 'fileindex' / 'platforms.json'
+
+
+def settings(root=None):
+    """The file-serving options above, defaults filled in. Unreadable or invalid values fall back to the defaults."""
+    root, path = _platforms_json(root)
+    try:
+        config = json.loads(path.read_text(encoding='utf-8-sig'))
+    except (OSError, ValueError):
+        config = {}
+    out = dict(SETTING_DEFAULTS)
+    for key, default in SETTING_DEFAULTS.items():
+        if isinstance(config.get(key), type(default)):
+            out[key] = config[key]
+    return out
+
+
+def save_settings(root=None, **changes):
+    """Update the file-serving options in platforms.json, keeping everything else in the file."""
+    root, path = _platforms_json(root)
+    try:
+        config = json.loads(path.read_text(encoding='utf-8-sig'))
+    except (OSError, ValueError):
+        config = {}
+    for key, value in changes.items():
+        if key not in SETTING_DEFAULTS:
+            raise ValueError(f'Unknown setting {key}')
+        if not isinstance(value, bool):
+            raise ValueError(f'{key} must be true or false')
+        config[key] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + '\n', encoding='utf-8')
+    return settings(root)
 
 
 @lru_cache(maxsize=12)
@@ -274,8 +340,9 @@ def _securefile_payload(raw):
     raise ValueError('The supplied Octo catalog is corrupt or uses an unsupported format')
 
 
-def ingest(platform, source, root=None):
-    """Accept encrypted/plain SecureFile or a decrypted Octo database; never modify input."""
+def ingest(platform, source, root=None, skip_unchanged=False):
+    """Accept encrypted/plain SecureFile or a decrypted Octo database; never modify input. With skip_unchanged, a list
+    already installed byte for byte is not checked or written again (-> {'unchanged': True, ...})."""
     from engine import storage
     root = Path(root) if root is not None else storage.home()
     if platform not in DEFAULT_IDS:
@@ -285,6 +352,11 @@ def ingest(platform, source, root=None):
         raise ValueError('Catalog exceeds 64 MiB')
     raw = source.read_bytes()
     raw = _securefile_payload(raw)
+    # Already installed byte for byte (the ingest folder keeps its file): nothing to check or write again.
+    for installed in (root / 'gameassets' / 'fileindex' / platform).glob('*/catalog.pb') if skip_unchanged else ():
+        if installed.stat().st_size == len(raw) and installed.read_bytes() == raw:
+            return {'platform': platform, 'revision': int(installed.parent.name) if installed.parent.name.isdigit()
+                    else installed.parent.name, 'unchanged': True, 'path': str(installed)}
     rev, url, md5s, count, total = inspect_catalog(raw)
     candidate = Catalog(DEFAULT_IDS[platform], platform, raw, rev, url, md5s, count, total)
     candidate.entries()
@@ -305,3 +377,4 @@ def ingest(platform, source, root=None):
     temp.write_bytes(raw)
     os.replace(temp, target)
     return {'platform': platform, 'revision': rev, 'records': count, 'objects': len(candidate.entries()), 'path': str(target)}
+

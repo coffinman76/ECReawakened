@@ -294,3 +294,267 @@ def patch_damage_challenge(game_folder):
     except OSError as error:
         return f'damagechallenge: cannot patch {dll} (is the game running?): {error}'
     return f'damagechallenge: patched {dll.name} at 0x{connect:X}, 0x{uses:X}, 0x{end:X}, 0x{lookup:X} (code at 0x{cave:X})'
+
+
+# ---- Victory Draw list picks the draw that was tapped ----
+# BoxGachaModalPresenter lists the draws in an InfiniteScroller, which makes only the cells that fit and reuses them
+# while scrolling. Each cell's ToggleButton joins the modal's ToggleButtonGroup when the cell is made, and the tapped
+# toggle became a draw index through <SetEvent>b__19_2: _toggleButtonGroup.CurrentIndex, the toggle's place in the group,
+# that is the order the cells were made in, not the draw the cell shows now. Stock events have two or three draws and
+# never scroll; the combined list (engine/cards.py build_victory_draws) does, and then opened, and highlighted, the
+# wrong draw. b__19_2(this, ToggleButton x) now returns the DataIndex (+0x3C) of the active cell
+# (_boxGachaButtonScroller +0x90 -> _activeCells +0xD8) whose _toggleButton (+0x50) is x, or -1 as before when none is.
+# The routine fits in the function and its padding (48 bytes). Game 4.0.0 RVA 0x1A030E0; found by its bytes after
+# b__19_1 (xor r8d,r8d ; jmp ChangeContent); anything other than exactly one match is left alone.
+BOX_SELECT = re.compile(rb'\x45\x33\xc0\xe9....\xcc{8}'
+                        rb'(\x48\x83\xec\x28\x48\x8b\x89\x98\x00\x00\x00\x48\x85\xc9\x74\x0b\x33\xd2\x48\x83\xc4\x28'
+                        rb'\xe9....\xe8....\xcc{16}'
+                        rb'|\x48\x8b\x89\x90\x00\x00\x00\x48\x8b\x89\xd8\x00\x00\x00.{34})', re.S)
+BOX_SELECT_CODE = bytes.fromhex(
+    '488b8990000000'    # mov rcx,[rcx+90h]      _boxGachaButtonScroller
+    '488b89d8000000'    # mov rcx,[rcx+0D8h]     _activeCells
+    '448b4118'          # mov r8d,[rcx+18h]      count
+    '488b4910'          # mov rcx,[rcx+10h]      items
+    '41ffc8'            # next: dec r8d
+    '780f'              # js none
+    '4a8b44c120'        # mov rax,[rcx+r8*8+20h] cell
+    '48395050'          # cmp [rax+50h],rdx      cell._toggleButton == x?
+    '75f0'              # jne next
+    '8b403c'            # mov eax,[rax+3Ch]      cell.DataIndex
+    'c3'                # ret
+    '83c8ff'            # none: or eax,-1
+    'c3'                # ret
+) + b'\xcc\xcc'
+
+
+def patch_box_gacha_select(game_folder):
+    """The Victory Draw list opens the draw that was tapped, also after it scrolls. Returns a short status string;
+    never raises on file errors."""
+    dll = Path(game_folder) / 'GameAssembly.dll'
+    try:
+        data = dll.read_bytes()
+    except OSError as error:
+        return f'victorydraw: cannot read {dll}: {error}'
+    hits = list(BOX_SELECT.finditer(data))
+    if len(hits) != 1:
+        return f'victorydraw: {len(hits)} matches in {dll.name} (unknown build), left alone'
+    at = hits[0].start(1)
+    if data[at:at + len(BOX_SELECT_CODE)] == BOX_SELECT_CODE:
+        return 'victorydraw: already patched'
+    if data[at] != 0x48 or data[at + 1:at + 4] != b'\x83\xec\x28':
+        return f'victorydraw: unexpected code at 0x{at:X} in {dll.name}, left alone'
+    backup = dll.with_name('GameAssembly.dll.steam')
+    try:
+        if not backup.exists():
+            shutil.copy2(dll, backup)
+        with dll.open('r+b') as stream:
+            stream.seek(at)
+            stream.write(BOX_SELECT_CODE)
+    except OSError as error:
+        return f'victorydraw: cannot patch {dll} (is the game running?): {error}'
+    return f'victorydraw: patched {dll.name} at 0x{at:X}'
+
+
+# ---- Victory Draw list highlights only the chosen draw ----
+# A draw's button shows the corner frame while its ToggleButton animator (_animator, 0x20) is in the on position. Only
+# ToggleButton.SetState moves it, and only the ToggleButtonGroup calls SetState: on for the button that was tapped,
+# off for the one tapped before. The list reuses buttons as it scrolls, and BoxGachaButtonCell.<Setup>b__6_0 only
+# calls SetEnable(selected) when a button shows another draw. These buttons tie their state to Enable, so SetState
+# then sees nothing to change and returns early, and a reused button kept its frame: two draws looked chosen.
+# b__6_0 now does what SetState(selected, true) would have done to the frame: SetEnable(selected, true), then
+# TweenAnimator.Reset(selected) (SetState's own immediate path). The group only listens to taps, so no selection
+# changes. The routine ends in the 13 bytes of padding just before b__6_0 (after Setup's never-returning throw call);
+# that tail returns through the ret at head+45 when the button has no animator.
+# Game 4.0.0: b__6_0 RVA 0x1A01590, TweenAnimator.Reset RVA 0xF72FE0; found by their bytes; exactly one match each.
+# An earlier version of this patch (SetEnable, then SetState) is recognised and replaced.
+CELL_SELECTED = re.compile(rb'\xe8....(\xcc{13}|\x41\xb0\x01\x48\x83\xc4\x28\xe9....\xcc|\x48\x83\xc4\x28\x5e\x5b\xe3\x32'
+                           rb'\xe9....)'
+                           rb'(\x48\x83\xec\x28\x48\x8b\x49\x50\x48\x85\xc9\x74\x18\x48\x8b\x01\x41\xb0\x01\x4c\x8b\x88'
+                           rb'\x70\x02\x00\x00\x48\x83\xc4\x28\x48\xff\xa0\x68\x02\x00\x00\xe8....\xcc{6}'
+                           rb'|\x89\x54\x24\x10\x48\x83\xec\x28\x48\x8b\x49\x50.{36}'
+                           rb'|\x53\x56\x48\x83\xec\x28\x48\x8b\x59\x50.{38})', re.S)
+ANIMATOR_RESET = re.compile(rb'\x48\x89\x5c\x24\x08\x57\x48\x83\xec\x20\x80\x79\x69\x00\x0f\xb6\xfa\x48\x8b\xd9\xc6\x41'
+                            rb'\x68\x00\x74\x1e\x48\x83\x79\x20\x00\xc6\x41\x69\x00\xc6\x41\x6b\x00', re.S)
+CELL_SELECTED_HEAD = bytes.fromhex(
+    '53'                # push rbx
+    '56'                # push rsi
+    '4883ec28'          # sub rsp,28h
+    '488b5950'          # mov rbx,[rcx+50h]      _toggleButton
+    '8bf2'              # mov esi,edx            selected
+    '488b03'            # mov rax,[rbx]
+    '41b001'            # mov r8b,1              immediate
+    '4c8b8870020000'    # mov r9,[rax+270h]
+    '488bcb'            # mov rcx,rbx
+    'ff9068020000'      # call [rax+268h]        SetEnable(selected, true)
+    '488b4b20'          # mov rcx,[rbx+20h]      _animator
+    '8bd6'              # mov edx,esi            selected
+    '4533c0'            # xor r8d,r8d
+    'ebc6'              # jmp tail (the padding before)
+    'c3'                # ret                    (the tail's way out when there is no animator)
+    'cccc')
+CELL_SELECTED_TAIL = bytes.fromhex(
+    '4883c428'          # add rsp,28h
+    '5e'                # pop rsi
+    '5b'                # pop rbx
+    'e332')             # jrcxz head+45 (ret) ; then jmp TweenAnimator.Reset(animator, selected)
+
+
+def patch_box_gacha_highlight(game_folder):
+    """The Victory Draw list lights only the chosen draw, also after it scrolls. Returns a short status string; never
+    raises on file errors."""
+    dll = Path(game_folder) / 'GameAssembly.dll'
+    try:
+        data = dll.read_bytes()
+    except OSError as error:
+        return f'victoryhighlight: cannot read {dll}: {error}'
+    cells, resets = list(CELL_SELECTED.finditer(data)), list(ANIMATOR_RESET.finditer(data))
+    if len(cells) != 1 or len(resets) != 1:
+        return f'victoryhighlight: {len(cells)}/{len(resets)} matches in {dll.name} (unknown build), left alone'
+    tail, head = cells[0].start(1), cells[0].start(2)
+    jump = tail + len(CELL_SELECTED_TAIL)
+    code = {tail: CELL_SELECTED_TAIL + _jmp(jump, resets[0].start()), head: CELL_SELECTED_HEAD}
+    if all(data[at:at + len(c)] == c for at, c in code.items()):
+        return 'victoryhighlight: already patched'
+    if data[head:head + 4] not in (b'\x48\x83\xec\x28', b'\x89\x54\x24\x10'):
+        return f'victoryhighlight: unexpected code at 0x{head:X} in {dll.name}, left alone'
+    backup = dll.with_name('GameAssembly.dll.steam')
+    try:
+        if not backup.exists():
+            shutil.copy2(dll, backup)
+        with dll.open('r+b') as stream:
+            for at in (tail, head):                    # the tail goes in before anything jumps to it
+                stream.seek(at)
+                stream.write(code[at])
+    except OSError as error:
+        return f'victoryhighlight: cannot patch {dll} (is the game running?): {error}'
+    return f'victoryhighlight: patched {dll.name} at 0x{head:X} (and 0x{tail:X})'
+
+
+# ---- Guild Battle mock fights in the game (no battle server) ----
+# GuildMainBattlePartySelectScreenPresenter.GuildBattleStartAsync, like Max Damage Challenge, always connects to a
+# battle-server room (ConnectBattleServerAsync: match/session, room/solo/create) and sets
+# BattlePlayer.SetupParameter.usesBattleServer, so a guild fight stopped on Network Error. The mock (practice) fight
+# itself runs in the game: BattleSceneBehaviour.PlayAsync starts it with event/guild/ranking/battle/practice/start and
+# ends it with practice/end, which carries only event_guild_ranking_battle_id, the damage being the battle server's to
+# report. So, as patch_damage_challenge does:
+#   1. the connect call (and the read of its UniTask) becomes `xorps xmm6,xmm6` + nops;
+#   2. usesBattleServer is set to 0 instead of 1 (searched for only in GuildBattleStartAsync's state machine);
+#   3. where PlayAsync's end lambda calls RequestGuildRankingBattlePracticeEndAsync (the branch taken when the setup's
+#      practiceGuildRankingBattleId, +0x108, is set), the fight's BattleInput.TotalDamage (+0x18) is packed above the
+#      id: id | damage << 20 (engine/rules.py GB_DAMAGE_SHIFT unpacks it);
+#   4. RequestGuildRankingBattlePracticeEndAsync's state machine has put the packed id in the request when it looks the
+#      fight up (GuildWork.GetGuildRankingBattleInfo); there it masks its own copy (+0x28) back to the low 20 bits, so the
+#      lookup and the result screen get the real id.
+# 3 and 4 jump to two small routines in the zero padding after the end of the il2cpp code section, after Max Damage
+# Challenge's (find_cave). Game 4.0.0 RVAs: 1 0x1C3046B, 2 0x1C30153, 3 0x14AE569, 4 0xE80FEB. Every site is found by
+# byte pattern, 2 and 4 only inside their own functions; anything other than exactly one match per site is left alone.
+GB_CONNECT = re.compile(rb'\x0f\xb6\x51\x28\x48\x89\x7c\x24\x30\x88\x54\x24\x28\x48\x89\x44\x24\x20\x4d\x8b\xce\x4c\x8b\xc3'
+                        rb'\x48\x8b\xd6\x48\x8d\x4c\x24\x40(\xe8....\x0f\x10\x30|\x0f\x57\xf6\x90\x90\x90\x90\x90)', re.S)
+GB_USES_SERVER = re.compile(rb'\x48\x8b\x01\x48\x85\xc0\x0f\x84....\xc6\x40\x42([\x01\x00])\x48\x8b\x05....\x48\x8b\x88'
+                            rb'\xb8\x00\x00\x00\x48\x8b\x09\x48\x85\xc9\x0f\x84....\x48\x8b\x05....\x48\x89\x81\xb8\x00\x00\x00',
+                            re.S)
+# mov r8,[rax+108h] (practiceGuildRankingBattleId) ; test r8,r8 ; jg <the practice end call>
+GB_END_BRANCH = re.compile(rb'\x4c\x8b\x80\x08\x01\x00\x00\x4d\x85\xc0\x0f\x8f', re.S)
+GB_END_CALL = re.compile(rb'(\x45\x33\xc9\x48\x8b\x57\x20|\xe9....\x90\x90)\x48\x8d\x8c\x24\x90\x00\x00\x00\xe8', re.S)
+GB_END_LOOKUP = re.compile(rb'(\x45\x33\xc0\x49\x8b\x54\x24\x28|\xe9....\x90\x90\x90)\x48\x8b\xc8\xe8....\x49\x89\x44\x24'
+                           rb'\x30\x49\x8d\x4c\x24\x30', re.S)
+# xor r9d,r9d ; mov rdx,[rdi+20h] ; test r15,r15 ; je +11 ; mov rax,[r15+18h] ; shl rax,20 ; or r8,rax ; (jmp back)
+GB_PACK = bytes.fromhex('4533c9' '488b5720' '4d85ff' '740b' '498b4718' '48c1e014' '4909c0')
+# mov rdx,[r12+28h] ; and edx,0FFFFFh ; mov [r12+28h],rdx ; xor r8d,r8d ; (jmp back)
+GB_MASK = bytes.fromhex('498b542428' '81e2ffff0f00' '4989542428' '4533c0')
+
+
+def _function(image, offset):
+    """-> (start, end) file offsets of the function that holds `offset`, or None."""
+    rva = image.rva(offset)
+    if rva is None:
+        return None
+    i = bisect.bisect_right(image.functions, (rva, 1 << 32)) - 1
+    if i < 0 or not image.functions[i][0] <= rva < image.functions[i][1]:
+        return None
+    return image.offset(image.functions[i][0]), image.offset(image.functions[i][0]) + image.functions[i][1] - image.functions[i][0]
+
+
+def _call_target(data, call):
+    return call + 5 + int.from_bytes(data[call + 1:call + 5], 'little', signed=True)
+
+
+def find_guild_practice_sites(data, image):
+    """-> (connect, uses, end, lookup) file offsets of the four sites, or a reason string."""
+    connects = list(GB_CONNECT.finditer(data))
+    branches = list(GB_END_BRANCH.finditer(data))
+    if len(connects) != 1 or len(branches) != 1:
+        return f'{len(connects)} connect / {len(branches)} end matches'
+    connect = connects[0].start(1)
+    start = _function(image, connect)
+    uses = list(GB_USES_SERVER.finditer(data, *start)) if start else []
+    jump = branches[0].end()
+    end = jump + 4 + int.from_bytes(data[jump:jump + 4], 'little', signed=True)
+    call = GB_END_CALL.match(data, end)
+    if len(uses) != 1 or call is None:
+        return f'{len(uses)} battle server / {0 if call is None else 1} end call matches'
+    wrapper = _function(image, _call_target(data, call.end() - 1))
+    machine = None
+    if wrapper:
+        at = data.find(WRAPPER_CALL, *wrapper)
+        machine = _function(image, _call_target(data, at + len(WRAPPER_CALL) - 1)) if at >= 0 else None
+    lookups = list(GB_END_LOOKUP.finditer(data, *machine)) if machine else []
+    if len(lookups) != 1:
+        return f'{len(lookups)} practice end lookup matches'
+    return connect, uses[0].start(1), end, lookups[0].start(1)
+
+
+def patch_guild_practice(game_folder):
+    """Guild Battle mock fights run in the game and send their damage to the server. Returns a short status string;
+    never raises on file errors."""
+    dll = Path(game_folder) / 'GameAssembly.dll'
+    try:
+        data = bytearray(dll.read_bytes())
+    except OSError as error:
+        return f'guildbattle: cannot read {dll}: {error}'
+    try:
+        image = _Image(bytes(data))
+    except ValueError as error:
+        return f'guildbattle: {error} in {dll.name}, left alone'
+    sites = find_guild_practice_sites(data, image)
+    if isinstance(sites, str):
+        return f'guildbattle: {sites} in {dll.name} (unknown build), left alone'
+    connect, uses, end, lookup = sites
+    grow = None
+    if data[end] == 0xE9:
+        cave = _call_target(data, end)
+    else:
+        found = find_cave(image, end)
+        if found is None:
+            return f'guildbattle: no free space in {dll.name}, left alone'
+        cave, header, grown = found
+        grow = (header, grown.to_bytes(4, 'little'))
+    pack, mask = cave, cave + 32
+    if len({image.rva(at) - at for at in (pack, end, lookup)}) != 1:
+        return f'guildbattle: free space in another section of {dll.name}, left alone'
+    wanted = {
+        connect: DC_NO_CONNECT,
+        uses: b'\x00',
+        pack: GB_PACK + _jmp(pack + len(GB_PACK), end + 7),
+        mask: GB_MASK + _jmp(mask + len(GB_MASK), lookup + 8),
+        end: _jmp(end, pack) + b'\x90\x90',
+        lookup: _jmp(lookup, mask) + b'\x90\x90\x90',
+    }
+    if all(data[at:at + len(code)] == code for at, code in wanted.items()):
+        return 'guildbattle: already patched'
+    if data[end] == 0xE9 and data[pack:pack + len(wanted[pack])] != wanted[pack]:
+        return f'guildbattle: unexpected code at 0x{pack:X} in {dll.name}, left alone'
+    backup = dll.with_name('GameAssembly.dll.steam')
+    try:
+        if not backup.exists():
+            shutil.copy2(dll, backup)
+        with dll.open('r+b') as stream:
+            if grow:
+                stream.seek(grow[0])
+                stream.write(grow[1])
+            for at in (pack, mask, connect, uses, lookup, end):    # the routines go in before anything jumps to them
+                stream.seek(at)
+                stream.write(wanted[at])
+    except OSError as error:
+        return f'guildbattle: cannot patch {dll} (is the game running?): {error}'
+    return f'guildbattle: patched {dll.name} at 0x{connect:X}, 0x{uses:X}, 0x{end:X}, 0x{lookup:X} (code at 0x{cave:X})'

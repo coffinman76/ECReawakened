@@ -5,8 +5,15 @@ main { max-width: 720px; margin: auto; padding: 16px; }
 header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
 h1 { font-size: 21px; margin: 0; }
 header span, .hint { color: #646464; }
+.edition { font-size: 13px; font-weight: 600; color: #0f8a7b; }
+.region { order: 1; margin-left: auto; font-size: 13px; }
 fieldset { min-width: 0; margin: 0 0 12px; padding: 12px; border: 1px solid #d5d5d5; border-radius: 5px; }
 legend { padding: 0 5px; font-weight: 600; }
+input[type="text"] { font: inherit; border: 1px solid #ccc; background: #fff; border-radius: 4px; min-height: 30px; padding: 3px 8px; color: inherit; min-width: 0; }
+.cdn-row { display: grid; grid-template-columns: 1fr 70px 90px; gap: 8px; min-width: 0; }
+.label-help { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+button.help { min-height: 0; width: 18px; height: 18px; padding: 0; border-radius: 50%; font-size: 11px; line-height: 16px; color: #555; }
+dialog code { font: 12px Consolas, monospace; background: #f0f4f6; padding: 1px 4px; border-radius: 3px; }
 button, select, summary { font: inherit; border: 1px solid #ccc; background: #fff; border-radius: 4px; min-height: 30px; color: inherit; }
 button { padding: 5px 10px; cursor: pointer; }
 button:hover:not(:disabled), summary:hover { background: #edf3fc; border-color: #6c96cf; }
@@ -21,7 +28,7 @@ select { width: 100%; padding: 3px 6px; }
 .client-data-row { margin-top: 8px; }
 .server-row { display: flex; align-items: center; gap: 8px; }
 #server-state { margin-left: auto; font-size: 12px; }
-.label-row { display: grid; grid-template-columns: 78px 1fr; gap: 6px; align-items: center; margin-top: 8px; }
+.label-row { display: grid; grid-template-columns: 100px 1fr; gap: 6px; align-items: center; margin-top: 8px; }
 .label-row .split { grid-template-columns: 1fr 150px; }
 details { position: relative; }
 summary { padding: 5px 8px; cursor: pointer; white-space: nowrap; list-style: none; text-align: center; }
@@ -30,3 +37,20 @@ summary { padding: 5px 8px; cursor: pointer; white-space: nowrap; list-style: no
 pre { height: 150px; background: white; border: 1px solid #d5d5d5; border-radius: 4px; padding: 8px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 Consolas, monospace; }
 footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 #operation { color: #666; font-size: 12px; }
+.busy { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: #f5f5f5cc; cursor: progress; }
+.busy[hidden], .server-row[hidden], .label-row[hidden] { display: none; }
+.busy-box { width: min(380px, 85%); padding: 18px 20px; background: #fff; border: 1px solid #d5d5d5; border-radius: 8px; box-shadow: 0 6px 24px #0002; text-align: center; }
+.busy-box p { margin: 10px 0 0; }
+#busy-title { font-size: 15px; font-weight: 600; }
+#busy-detail { min-height: 1em; overflow-wrap: anywhere; }
+.spinner { width: 28px; height: 28px; margin: 0 auto; border: 3px solid #d9e2ea; border-top-color: #3576ba; border-radius: 50%; animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+dialog { max-width: 520px; border: 1px solid #ccc; border-radius: 6px; padding: 16px 18px; color: inherit; background: #fff; box-shadow: 0 6px 24px #0003; }
+dialog::backdrop { background: #0004; }
+dialog h2 { font-size: 16px; margin: 0 0 8px; }
+dialog p, dialog li { line-height: 1.45; }
+dialog ul { padding-left: 18px; margin: 6px 0; }
+.url-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.url-row code { flex: 1; padding: 6px 8px; background: #f0f4f6; border: 1px solid #d5dde2; border-radius: 4px; font: 13px Consolas, monospace; user-select: all; overflow-wrap: anywhere; }
+.warn { color: #9a3412; }
+.dialog-buttons { display: flex; justify-content: flex-end; margin-top: 12px; }

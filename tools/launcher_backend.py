@@ -52,6 +52,8 @@ class Launcher:
         self._active = None
         self._network = {'addresses': [], 'hosts': []}
         self._seasons = []
+        self._guild_battles = []
+        self._farm_visitors = []
         self._logs = self._root / 'logs'
         self._logs.mkdir(exist_ok=True)
         self._logpath = self._logs / 'server.log'
@@ -112,7 +114,7 @@ class Launcher:
         if self._running() or self._port_busy() or self._others():
             raise ValueError('Stop the server and asset operations before finding MasterData and LocalizeText.')
         result = self._prepare_client_data()
-        self._seasons = self._command('seasons')['seasons']
+        self._load_seasons()
         return result
 
     def _say(self, message, record=True):
@@ -134,6 +136,20 @@ class Launcher:
         with self._lock:
             self._children.add(process)
         return process
+
+    def _load_seasons(self, ready=True):
+        """The old season passes, guild battles and farm visitors the menus offer (engine/seasons.py), none until the data is ready."""
+        listing = self._command('seasons') if ready else {}
+        self._seasons, self._guild_battles = listing.get('seasons', []), listing.get('guild_battles', [])
+        self._farm_visitors = listing.get('farm_visitors', [])
+
+    def _region(self):
+        """gameplay-settings.json "region": "gl" (global, the default) or "jp" (the Japan edition); any other value is global."""
+        try:
+            value = json.loads((self._root / 'gameplay-settings.json').read_text(encoding='utf-8-sig')).get('region')
+        except (OSError, ValueError, AttributeError):
+            value = None
+        return 'jp' if str(value or '').strip().lower() == 'jp' else 'gl'
 
     def _command(self, *args):
         process = self._spawn(list(args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace')
@@ -175,6 +191,12 @@ class Launcher:
                 return True
 
     def _confirm(self, text):
+        if os.name == 'nt':
+            # pywebview's own box can open behind the window, leaving the launcher stuck on "Working…" with no
+            # visible question. A topmost box that takes the foreground can't hide.
+            MB_OKCANCEL, MB_ICONQUESTION, MB_SETFOREGROUND, MB_TOPMOST = 0x1, 0x20, 0x10000, 0x40000
+            flags = MB_OKCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST
+            return ctypes.windll.user32.MessageBoxW(None, str(text), 'Ever Crisis: Reawakened', flags) == 1   # IDOK
         return self._window.create_confirmation_dialog('Ever Crisis: Reawakened', text)
 
     def _pick(self, folder=False, file_types=('All files (*.*)',)):
@@ -224,7 +246,7 @@ class Launcher:
                 self._say(f'MasterData and LocalizeText are incomplete: {error}. Choose a folder or find files again after restoring them.')
             self._refresh_accounts()
             self._network = self._command('network')
-            self._seasons = self._command('seasons')['seasons'] if self._client_data['ready'] else []
+            self._load_seasons(self._client_data['ready'])
             return {'ok': True}
         except Exception as error:
             self._say(f'Data setup failed: {error}. Resolve this and reopen the launcher.')
@@ -269,7 +291,8 @@ class Launcher:
             self._clear_hosts()
         if self._port_busy():
             raise ValueError('Another program is using HTTPS port 443. Close it before starting the server.')
-        self._prepare_client_data()
+        if not self._client_data['ready']:     # the server checks the data again itself as it starts
+            self._prepare_client_data()
         if os.name == 'nt':
             kernel = ctypes.WinDLL('kernel32', use_last_error=True)
             kernel.CreateMutexW.restype = ctypes.c_void_p
@@ -332,7 +355,7 @@ class Launcher:
                     self._steam.save()
                     self._say(f'MasterData and LocalizeText source: {folder}')
                     self._prepare_client_data()
-                    self._seasons = self._command('seasons')['seasons']
+                    self._load_seasons()
             elif name == 'start':
                 if not self._running():
                     self._start_server()
@@ -343,6 +366,20 @@ class Launcher:
                     subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', str(self._root)])
             elif name == 'stop':
                 self._stop_server()
+            elif name == 'export_account':
+                account = next((a for a in self._accounts if a['id'] == str(value)), None)
+                if not account:
+                    raise ValueError('Pick the account to export.')
+                import webview
+                stem = re.sub(r'[^\w-]+', '_', account['name'] or 'account').strip('_') or 'account'
+                result = self._window.create_file_dialog(webview.FileDialog.SAVE, save_filename=f'{stem}-{account["id"]}.json',
+                                                          file_types=('Account JSON (*.json)',))
+                path = result if isinstance(result, str) else (result[0] if result else None)
+                if path:
+                    path = str(path) if str(path).lower().endswith('.json') else f'{path}.json'
+                    self._command('export', account['id'], path)
+                    self._say(f'Exported {account["name"] or account["id"]} to {path}. Import it with Import JSON… '
+                              'on another PC to carry on there.')
             elif name in ('new', 'use', 'import_account', 'remove'):
                 if name == 'new':
                     if self._confirm('Start a new account? Your other accounts remain available.'):
@@ -381,6 +418,20 @@ class Launcher:
                 if str(value) not in ['0'] + [str(s['id']) for s in self._seasons]:
                     raise ValueError('Unknown season')
                 self._steam.state['season_pass'] = str(value) if str(value) != '0' else ''
+                self._steam.save()
+            elif name == 'guild_battle':
+                if self._running():
+                    raise ValueError('Stop the server before changing the guild battle.')
+                if str(value) not in ['0'] + [str(g['id']) for g in self._guild_battles]:
+                    raise ValueError('Unknown guild battle')
+                self._steam.state['guild_battle'] = str(value) if str(value) != '0' else ''
+                self._steam.save()
+            elif name == 'farm_visitor':
+                if self._running():
+                    raise ValueError('Stop the server before changing the chocobo farm visitor.')
+                if str(value) not in ['0'] + [str(v['id']) for v in self._farm_visitors]:
+                    raise ValueError('Unknown farm visitor')
+                self._steam.state['farm_visitor'] = str(value) if str(value) != '0' else ''
                 self._steam.save()
             elif name == 'play':
                 if not self._ready or not self._running():
@@ -442,9 +493,15 @@ class Launcher:
                     'client_data': self._client_data.copy(),
                     'network': self._network, 'seasons': self._seasons,
                     'season': str(self._steam.state.get('season_pass') or '0'),
+                    'region': self._region(),
+                    'guild_battles': self._guild_battles,
+                    'guild_battle': str(self._steam.state.get('guild_battle') or '0'),
+                    'farm_visitors': self._farm_visitors,
+                    'farm_visitor': str(self._steam.state.get('farm_visitor') or '0'),
                     'game': ('Protected copy' if self._steam.copy() else 'Steam installation') + f': {folder or "not found"} ({BUILDS.get(build, build or "build unknown")})',
                     'copy': bool(self._steam.copy()), 'installed': bool(self._steam.install()),
-                    'game_running': self._game_running(), 'messages': messages, 'data_folder': str(self._root)}
+                    'game_running': self._game_running(), 'messages': messages, 'data_folder': str(self._root),
+                    'platform': sys.platform}
         except Exception as error:
             self._say(error)
             return {'error': str(error)}

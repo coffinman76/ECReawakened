@@ -13,6 +13,8 @@ told by the recipe (engine/data/masterdata-patches.json):
 - "escalation_cards": every Escalation ladder on one card and every Escalation co-op area on a second.
 - "coop_as_solo" (from gameplay-settings.json, on unless false): every co-op fight also as a solo stage.
 - "event_towers": events that are long runs of single fights, as towers on the Solo > Towers screen.
+- "victory_draws": every Critical Threat's Victory Draws in one list on one Critical Threat page (the hub); the other
+  Critical Threat cards are hidden (their fights stay on the Critical Threats list card as copies).
 
 Each builder writes its rows into the tables and its names into Build.names in one pass. The list layout comes from
 the page a card borrows (m_event_base col 20 EventDetailId stays the page's; cols 12 and 25, the tile and the art
@@ -21,6 +23,7 @@ m_event_area_category). A card that is shown with no areas behind it hangs the g
 has its own card hidden; that also hides its story chapter, while the chapter's fights stay on the card as stages.
 """
 import copy
+import textwrap
 from datetime import datetime, timezone
 
 HIDDEN = 620009999001    # never-true condition set (masterdata_patches._add_offline_rows)
@@ -41,7 +44,8 @@ def text_id(kind, number):
 
 def wanted(recipe):
     """True when the recipe asks for any generated card or tower."""
-    return any(recipe.get(key) for key in ('list_cards', 'guild_card', 'escalation_cards', 'event_towers'))
+    return any(recipe.get(key) for key in ('list_cards', 'guild_card', 'escalation_cards', 'event_towers',
+                                           'victory_draws'))
 
 
 def generated_ids(recipe):
@@ -71,6 +75,19 @@ def clean(name):
 
 def month(ms):
     return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%b '%y")
+
+
+ENTRY_LINE = 30          # characters of a list card's entry line that fit before the game cuts it off
+
+
+def entry_name(name, detail='', start=None):
+    """A list card entry: the event's name, wrapped at a word onto a second line when too long, then its part (Solo 2,
+    Co-op) and month on a smaller line. The game cuts an entry off after about 33 characters a line; it shows a line
+    break and <size> (as the Escalation cards' entries)."""
+    lines = textwrap.wrap(name, ENTRY_LINE) or ['']
+    lines = lines[:1] + [' '.join(lines[1:])] if len(lines) > 1 else lines
+    small = ' '.join(x for x in (detail, f'({month(start)})' if start else '') if x)
+    return '\n'.join(lines) + (f'\n<size=75%>{small}</size>' if small else '')
 
 
 class Build:
@@ -239,7 +256,7 @@ def build_list_cards(b):
         order = min(events[e][2] for e in members) - 1 if members else events[spec['page']][2]
         if spec.get('front'):                          # ahead of every event instead of beside its newest member
             order = min(row[2] for row in events.values()) - 1
-        b.card(spec, order)
+        card_bonus(b, b.card(spec, order), members)
         page_group = {row[1]: row for row in b.tables['m_event_solo_area_group']}.get(spec['page'])
         group = list(page_group or [0, 0, 1, 0, 0, 0])
         group[0:4] = [cid, cid, 1, text_id('name', cid)]
@@ -254,13 +271,13 @@ def build_list_cards(b):
         for position, (event_id, area) in enumerate(entries, 1):
             row = live[area[0]]
             row[1], row[2], row[6], row[7] = cid, position, text_id('entry', cid * 1000 + position), cid
-            label = b.event_name(stock_events[event_id])
+            detail = ''
             if len(held[event_id]) > 1:
                 part = area_names.get(area[6]) or part_name(area[0])
                 seen[event_id, part] = seen.get((event_id, part), 0) + 1
-                label = f'{label}: {part}' + (f' {seen[event_id, part]}' if seen[event_id, part] > 1 else '')
-            if starts.get(event_id):                   # Square reused names for re-runs: the month tells them apart
-                label += f' ({month(starts[event_id])})'
+                detail = part + (f' {seen[event_id, part]}' if seen[event_id, part] > 1 else '')
+            # Square reused names for re-runs: the month tells them apart
+            label = entry_name(b.event_name(stock_events[event_id]), detail, starts.get(event_id))
             b.name('m_event_solo_area', 'entry', cid * 1000 + position, label)
         b.hide([e for e in members if e not in stays])
         linked = {(row[0], row[1]) for row in b.tables['m_event_mission_group_rel']}
@@ -268,6 +285,26 @@ def build_list_cards(b):
             if event_id in held and (cid, group_id) not in linked:
                 b.tables['m_event_mission_group_rel'].append([cid, group_id])
                 linked.add((cid, group_id))
+
+
+def card_bonus(b, card, members):
+    """#104: the party screen shows the event bonus of the card it was opened from (m_event_base col 21
+    EventBonusEffectGroupId), so a list card gets a group of its own (its id) holding copies of its members' bonus rows
+    (m_event_bonus_effect, ids card * 1000 + 1...); the screen keeps the rows whose item the stage drops."""
+    b.need('list card event bonuses', 'm_event_bonus_effect')
+    stock_events = {row[0]: row for row in b.source('m_event_base')}
+    cid = card[0]
+    taken = {row[0] for row in b.tables['m_event_bonus_effect']}
+    groups = [stock_events[e][21] for e in members if len(stock_events[e]) > 21 and stock_events[e][21]]
+    rows = [list(row) for group in groups for row in b.source('m_event_bonus_effect') if row[1] == group]
+    if len(rows) > 999:
+        raise conflict(f'list card {cid} has more than 999 event bonus rows')
+    for n, row in enumerate(rows, 1):
+        row[0], row[1] = cid * 1000 + n, cid
+        if row[0] in taken:
+            raise conflict(f'event bonus row {row[0]} for list card {cid} is already used')
+        b.tables['m_event_bonus_effect'].append(row)
+    card[21] = cid if rows else 0
 
 
 def copied_stages(recipe, groups, areas, stages):
@@ -479,7 +516,7 @@ def build_escalation_cards(b):
         cid = part['card']
         if cid in sections or cid in groups:
             raise conflict(f'card id {cid} is already used')
-        b.card(part, order, section=cid)
+        card_bonus(b, b.card(part, order, section=cid), events)
         b.tables['m_event_scenario_section'].append([cid, 1, 0, 0, 0, 0])
         b.tables['m_event_area_category'].append([cid, cid, text_id('category', cid)])
         b.name('m_event_area_category', 'category', cid, part['title'])
@@ -654,6 +691,7 @@ def build_coop_solo(b):
         areas_of.setdefault(owner.get(area[1]), []).append(live[area[0]])
     with_coop = {f[2] for f in b.source('m_event_multi_battle')}
     on_coop_card = coop_cards(b, with_coop, stock_events)
+    on_card_events = {}                              # co-op card -> its events, for their event bonuses
     copied = {e for spec in b.recipe.get('list_cards', ()) if not spec.get('stories') for e in spec.get('copies', ())}
     for event_id, area_id in sorted({(f[2], f[23]) for f in b.source('m_event_multi_battle')}):
         if event_id in b.coop_done or event_id not in stock_events or not areas_of.get(event_id):
@@ -661,11 +699,10 @@ def build_coop_solo(b):
         area = multi.get(area_id, [area_id, 0, 0, 0, 0, 0])   # older events list co-op fights with no co-op area (0)
         if event_id in on_coop_card:                 # its list card's co-op card, an entry per event
             cid, position = on_coop_card[event_id]
-            label = b.event_name(stock_events[event_id])
-            if starts.get(event_id):
-                label += f' ({month(starts[event_id])})'
+            label = entry_name(b.event_name(stock_events[event_id]), '', starts.get(event_id))
             last = max(areas_of[event_id], key=lambda a: (a[2], a[0]))
             coop_solo(b, event_id, area, 98000000 + event_id * 10, last, cid, position, cid, label)
+            on_card_events.setdefault(cid, []).append(event_id)
             continue
         home = [a for a in areas_of[event_id] if groups[a[1]][1] == event_id]
         if event_id in copied:                         # on the list after its copy, as before its own card came back
@@ -681,10 +718,11 @@ def build_coop_solo(b):
                 row[2] += 1
         label = 'Co-op'
         if on_card:                                    # a list entry names its event, as the list card's own do
-            label = f'{b.event_name(stock_events[event_id])}: Co-op'
-            if starts.get(event_id):
-                label += f' ({month(starts[event_id])})'
+            label = entry_name(b.event_name(stock_events[event_id]), 'Co-op', starts.get(event_id))
         coop_solo(b, event_id, area, 98000000 + event_id * 10, last, last[1], last[2] + 1, last[7], label)
+    cards = {row[0]: row for row in b.tables['m_event_base']}
+    for cid, members in on_card_events.items():        # its party screen shows its events' bonuses, as a list card's
+        card_bonus(b, cards[cid], list(dict.fromkeys(members)))
     for fight in b.tables['m_event_multi_battle']:     # the co-op originals, which only refuse, are no longer shown
         fight[12] = HIDDEN
     for area in b.tables['m_event_multi_area']:
@@ -758,6 +796,42 @@ def build_event_towers(b):
     b.hide(event_id for _, event_id, _ in plan)
 
 
+# ---------------------------------------------------------------- victory draws
+# Only a Critical Threat page (event type 2) has a Victory Draw button. It opens the event's draw group
+# (m_event_base col 16 BoxGachaGroupId) and lists every draw of that group (m_box_gacha col 1), each with its own art,
+# ticket and prizes, by OrderNo (col 6); the server keys draws by their own id. So every Critical Threat's draws join
+# the hub's group, newest event first, and the hub (renamed from the recipe) is the one Critical Threat card shown: the
+# others, whose fights are copied onto a list card, are hidden.
+# The game's list picks the wrong draw once it scrolls; tools/scoreboss.patch_box_gacha_select fixes that.
+def build_victory_draws(b):
+    spec = b.recipe.get('victory_draws')
+    if not spec:
+        return
+    b.need('the Victory Draws', 'm_event_base', 'm_box_gacha')
+    events = b.ids('m_event_base')
+    members = b.newest_first([row[0] for row in b.source('m_event_base') if row[1] == 2 and row[16]])
+    hub = spec['hub']
+    if hub not in members:
+        raise incomplete(f'Victory Draw hub {hub} is not a Critical Threat with draws')
+    group = events[hub][16]
+    draws = {}
+    for row in b.tables['m_box_gacha']:
+        draws.setdefault(row[1], []).append(row)
+    position = 0
+    for event_id in members:
+        for row in sorted(draws.get(events[event_id][16], ()), key=lambda r: (r[6], r[0])):
+            row[1], row[6] = group, position
+            position += 1
+        events[event_id][16] = group
+    events[hub][5] = events[hub][7] = SHOWN
+    events[hub][10], events[hub][26], events[hub][27] = text_id('name', hub), text_id('label', hub), text_id('subtitle', hub)
+    b.name('m_event_base', 'name', hub, spec['title'])
+    b.name('m_event_base', 'label', hub, spec['title'])
+    b.name('m_event_base', 'subtitle', hub, spec['title'])   # the card's big title (stock: the event's own)
+    copied = {e for card in b.recipe.get('list_cards', ()) for e in card.get('copies', ())}
+    b.hide(row[0] for row in b.source('m_event_base') if row[1] == 2 and row[0] in copied and row[0] != hub)
+
+
 # ---------------------------------------------------------------- missions tab
 # A card's Missions button hangs the game when the card has no mission group (m_event_mission_group_rel): every stock
 # card has one. A card whose members have no missions (Frenzy Battles, Mock Guild Battles) gets an empty Event group,
@@ -802,7 +876,7 @@ def build_card_order(b):
 
 
 BUILDERS = (build_list_cards, build_guild_card, build_escalation_cards, build_coop_solo, build_event_towers,
-            build_mission_tabs, build_card_order)
+            build_victory_draws, build_mission_tabs, build_card_order)
 
 
 def build(recipe, source, tables):

@@ -1,8 +1,8 @@
 """HTTPS service for the game's hostnames, available to this PC and its LAN."""
-import hashlib, json, logging, os, random, re, socket, ssl, threading, time, uuid
+import base64, hashlib, json, logging, os, random, re, socket, ssl, threading, time, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from engine import storage
+from engine import edition, storage
 from engine import responses
 from engine.offline_sdk import SDK_HOST, initialization_response, tls_context
 
@@ -11,7 +11,11 @@ log = logging.getLogger("svc")
 
 HOSTS = ["game-q74z3cyn.app.gl.ffviiec.com", "resources-api-c9ps53g2.app.gl.ffviiec.com",
          "resources-data-w6d4k7cz.app.gl.ffviiec.com", "client-masterdata-c9ps53g2.app.gl.ffviiec.com",
-         "chat-pd381ne.app.gl.ffviiec.com", "webview-w62j4u3y.app.gl.ffviiec.com"]
+         "chat-pd381ne.app.gl.ffviiec.com", "webview-w62j4u3y.app.gl.ffviiec.com",
+         # the Japan edition's servers, and the region pings both editions measure before connecting
+         "game-d92afpwh.app.jp.ffviiec.com", "resources-api-y8i69z4b.app.jp.ffviiec.com",
+         "client-masterdata-r7jquwfi.app.jp.ffviiec.com", "resources-data-u8hrp32d.app.jp.ffviiec.com",
+         "us-ping-q8fbjkd2.app.gl.ffviiec.com", "ap-ping-y8tnhkau.app.gl.ffviiec.com", "eu-ping-d73ema8f.app.gl.ffviiec.com"]
 # Names the game calls that are not its servers: its built-in crash reporter (Bugsnag, on the publisher's account)
 # asks for these on every launch. While the service runs they get a hosts line to 0.0.0.0, so the game cannot reach them.
 BLOCKED = ["sessions.bugsnag.com", "notify.bugsnag.com"]
@@ -46,15 +50,37 @@ class Data:
             self.language = source.read().strip()
         self.languages = {'en': self.language}
         self.paths = self._paths(live)
-        try:    # an old season pass picked in the window: its tables and a catalog naming them (engine\seasons.py)
+        try:    # an old season pass, guild battle or farm visitor picked in the window: their tables and a catalog naming them (engine\seasons.py)
             from engine import seasons
-            sid = seasons.chosen(HOME)
-            if sid:
-                self.catalog, extra = seasons.build(HOME, sid); self.paths.update(extra)
-                log.info("season pass %d: open", sid)
-        except Exception as e: log.error("season pass: not opened (%r); the game shows none", e)
-        from engine.catalogs import load
+            sid, gid, vid = seasons.chosen(HOME), seasons.chosen_guild_battle(HOME), seasons.chosen_farm_visitor(HOME)
+            if vid:
+                try: seasons._farm_cells(HOME, vid)
+                except Exception as e: log.error("chocobo farm visitor %d: not shown (%r); the farm keeps its own", vid, e); vid = 0
+            if sid or gid or vid:
+                self.catalog, extra = seasons.build(HOME, sid, gid, vid); self.paths.update(extra)
+                if sid: log.info("season pass %d: open", sid)
+                if gid: log.info("guild battle %d: open for mock battles", gid)
+                if vid: log.info("chocobo farm visitor %d: shown", vid)
+        except Exception as e: log.error("season pass / guild battle / farm visitor: not opened (%r); the game shows none", e)
+        from engine.files import migrate_store
+        try:
+            moved = migrate_store(HOME)
+            if moved: log.info("files: moved %d saved files into the shared store (gameassets/blobs/by-md5)", moved)
+        except Exception as e: log.error("files: saved files not moved (%r)", e)
+        edition.call('prepare', log)
+        from engine.catalogs import load, settings
         self.registry = load(HOME)
+        try:    # the Story screen's Crossover Stories / Event Stories files, made from this PC's own (engine\storyart.py)
+            from engine import masterdata_patches, storyart
+            recipe, copies = masterdata_patches.story_titles(HOME)
+            self.registry = storyart.extend(self.registry, HOME, recipe, copies, log)
+        except Exception as e: log.error("story titles: asset lists left as they were (%r)", e)
+        try:    # files the publisher pulled, from copies the player saved in gameassets\restored (engine\restored.py)
+            from engine import restored
+            self.registry = restored.extend(self.registry, HOME, log)
+        except Exception as e: log.error("restored files: asset lists left as they were (%r)", e)
+        self.settings = settings(HOME)
+        log.info("files: client cache %s", 'on' if self.settings['steam_cache'] else 'off')
         if not self.registry.catalogs:
             log.info('No asset index imported; running without local Octo asset serving.')
         steam = next((c for c in self.registry.catalogs.values() if c.platform == 'steam'), None)
@@ -256,6 +282,44 @@ class Handler(BaseHTTPRequestHandler):
                 os.replace(f + ".tmp", f)
         except Exception as e: log.warning("gap for %s not saved: %r", self.path.split("?")[0], e)
 
+    # With "detailed_logging": true in gameplay-settings.json, every game call is also kept in logs/calls, one file per
+    # call: the request and the reply decoded, with their field names, plus the raw request and the game's version
+    # headers. Only the newest CALLS_KEPT stay, and Save logs carries them. It is off unless asked for: the replies
+    # hold the account's own data, and some are large. The file is written after the reply has gone out, so the game
+    # never waits on it.
+    CALLS_KEPT = 50
+    _call_lock = threading.Lock()
+    _call_seq = 0
+
+    def _record(self, path, plain, status):
+        if getattr(self.rules, "CFG", {}).get("detailed_logging") is not True: return
+        try:
+            from google.protobuf.json_format import MessageToDict
+            host = self.headers.get("Host", "?").split(".")[0]
+            s = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "host": host, "path": path, "status": status}
+            if getattr(self, "_t0", None) is not None: s["ms"] = round((time.perf_counter() - self._t0) * 1000)
+            s["headers"] = {k: v for k, v in self.headers.items() if k.lower() in ("x-app-version", "x-master-path", "x-language")}
+            if getattr(self, "_plain", b""):     # decoded to read; raw (decrypted, base64) for what decoding drops
+                s["request"] = self._named(self._plain); s["request_raw"] = base64.b64encode(self._plain).decode()
+            if plain:
+                try:
+                    m = self.data.P.Command_ApiNetwork_Api_ApiResponse(); m.ParseFromString(plain)
+                    s["reply"] = MessageToDict(m, preserving_proto_field_name=True)
+                except Exception: s["reply_hex"] = plain[:4096].hex()
+                s["reply_bytes"] = len(plain)
+            d = p("logs", "calls"); os.makedirs(d, exist_ok=True)
+            with Handler._call_lock:
+                Handler._call_seq += 1
+                name = "%s-%05d-%s.json" % (time.strftime("%Y%m%d-%H%M%S"), Handler._call_seq,
+                                            re.sub(r"[^A-Za-z0-9]+", "_", path).strip("_")[:80])
+                f = os.path.join(d, name)
+                with open(f + ".tmp", "w", encoding="utf-8") as fh: json.dump(s, fh, indent=1, default=str)
+                os.replace(f + ".tmp", f)
+                for old in sorted(n for n in os.listdir(d) if n.endswith(".json"))[:-self.CALLS_KEPT]:
+                    try: os.remove(os.path.join(d, old))
+                    except OSError: pass
+        except Exception as e: log.warning("call record for %s not saved: %r", path, e)
+
     def _named(self, plain):
         """A decrypted game request with its field names, without the common header; field numbers where the names fail."""
         try:
@@ -279,12 +343,14 @@ class Handler(BaseHTTPRequestHandler):
             if host == SDK_HOST:
                 status, headers, response = initialization_response(self.command, self.path)
                 self._note('SDK', str(status)); return self._send(status, headers, response)
+            if edition.call('route', self, host, path, body, default=False): return
             if host not in HOSTS: return self._send(404, {}, b'')
             if host.startswith(("game-", "chat-")): return self._api(path, body)
             if host.startswith("resources-api"): return self._resources(path)
             if host.startswith("resources-data"): return self._object(path)
             if host.startswith("client-masterdata"): return self._tables(path)
             if host.startswith("webview-"): return self._web(path)
+            if "-ping-" in host: self._note("PING"); self._gap("PING", body); return self._send(200, {}, b"")
         except GONE:
             self._note("GONE", "the game closed this call before the answer went out"); self.close_connection = True; return
         except Exception as e:
@@ -390,6 +456,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.endswith("/auth/session"):
             Handler.tokens[uid] = out["X-Token"] = str(uuid.uuid4()) + uuid.uuid4().hex[:8]
         self._send(status, out, enc)
+        self._record(path, plain, status)
 
     # ---- files ----------------------------------------------------------------------------------------------------
     def _resources(self, path):
@@ -401,6 +468,7 @@ class Handler(BaseHTTPRequestHandler):
         if parts[:2] not in (['v1', 'revision'], ['v1', 'list']) or len(parts) < 3:
             return self._send(404, {}, b'')
         d = self.data.registry.get(parts[2])
+        if d is None and edition.call('asset_list', self, parts, default=False): return
         if d is None:
             # Completed installs still check Octo even when no local index is supplied.
             # Only acknowledge the known final revision; never invent a full index.
@@ -432,12 +500,13 @@ class Handler(BaseHTTPRequestHandler):
         if obj.startswith('o/'): obj = obj[2:]
         if not re.fullmatch(r"[A-Za-z0-9]{1,16}", obj): return self._send(404, {}, b"")
         want = self.data.md5.get(obj)
-        from engine.files import find_blob, blob_dir
+        from engine.files import find_blob, store_path
         catalogs = self.data.registry.locations.get(obj, [])
         if not want: return self._send(404, {}, b'')
-        f = os.path.join(blob_dir(catalogs[0]), want)
+        f = store_path(want)
+        steam = [c for c in self.data.registry.catalogs.values() if c.platform == 'steam']
         for catalog in catalogs:
-            g = find_blob(catalog, obj, want)
+            g = find_blob(catalog, obj, want, others=steam)
             if not g: continue
             with open(g, 'rb') as file:
                 stat = os.fstat(file.fileno()); signature = (stat.st_mtime_ns, stat.st_size)
@@ -451,6 +520,7 @@ class Handler(BaseHTTPRequestHandler):
                 import shutil
                 shutil.copyfileobj(file, self.wfile, 256 * 1024)
                 self._note('FILE', f'{stat.st_size}B'); return
+        if edition.call('missing_file', self, obj, want, f, default=False): return
         src = self.data.source
         if src and want and time.time() - Handler._miss.get(obj, 0) > 600:
             data = self._fetch(f"{src}/o/{obj}")

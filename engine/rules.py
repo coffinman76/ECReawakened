@@ -269,6 +269,24 @@ def _gift_weapons_heal(st):
         print(f'gift weapons: {st.user_id} got {what}')
     return n
 _AWARD_IX = None
+_COOP_COPIES = {}
+
+def _coop_copies():
+    """{co-op fight (m_event_multi_battle id): the solo stage copying it}, for "coop_as_solo" (engine/cards.py
+    coop_solo). The Crash Battle (Co-op) award (m_award_battle) lists co-op fights, which are only played as copies."""
+    from engine import cards
+    stages = md('m_event_solo_battle')
+    if _COOP_COPIES.get('src') is not stages:
+        fights = {(f[2], f[4]): f[0] for f in md('m_event_multi_battle')}
+        found = {}
+        for s in stages:
+            if cards.COOP_STAGES < s[0] % 1000 < cards.COOP_STAGES + 100:
+                f = fights.get((s[0] // 1000, s[5]))
+                if f:
+                    found.setdefault(f, s[0])
+        _COOP_COPIES.clear()
+        _COOP_COPIES.update(src=stages, map=found)
+    return _COOP_COPIES['map']
 
 def _award_sync(st, tx):
     global _AWARD_IX
@@ -278,9 +296,10 @@ def _award_sync(st, tx):
             if lvl == 0:
                 _AWARD_IX.setdefault(aw, []).append(bid)
     T = st.tables['user_event_solo_battle_list']
+    copies = _coop_copies()
     n = 0
     for aw, battles in _AWARD_IX.items():
-        cnt = sum((1 for i in battles if (i,) in T and T[i,].total_win_count > 0))
+        cnt = sum((1 for b in battles if any((i,) in T and T[i,].total_win_count > 0 for i in (b, copies.get(b)))))
         row = st.get('user_award_list', aw)
         if cnt > (row.award_count if row else 0):
             row = row or st.new_row('user_award_list', award_id=aw)
@@ -399,6 +418,10 @@ def user_title(st, req, ctx):
     except Exception as e:
         print(f'chocobo area missions failed for {st.user_id}: {e!r}')
     try:
+        _special_missions_received_heal(st)
+    except Exception as e:
+        print(f'special missions heal failed for {st.user_id}: {e!r}')
+    try:
         _summon_pact_on_character_heal(st)
     except Exception as e:
         print(f'summon pact heal failed for {st.user_id}: {e!r}')
@@ -415,6 +438,14 @@ def user_title(st, req, ctx):
     except Exception as e:
         print(f'weapon customization heal failed for {st.user_id}: {e!r}')
     try:
+        _story_title_events_heal(st)
+    except Exception as e:
+        print(f'story title events heal failed for {st.user_id}: {e!r}')
+    try:
+        _story_entry_heal(st)
+    except Exception as e:
+        print(f'story entry heal failed for {st.user_id}: {e!r}')
+    try:
         _event_story_missions_heal(st)
     except Exception as e:
         print(f'event story missions heal failed for {st.user_id}: {e!r}')
@@ -422,6 +453,10 @@ def user_title(st, req, ctx):
         _event_battle_episodes_heal(st)
     except Exception as e:
         print(f'event battle episodes heal failed for {st.user_id}: {e!r}')
+    try:
+        _panel_battle_missions_heal(st)
+    except Exception as e:
+        print(f'panel battle missions heal failed for {st.user_id}: {e!r}')
     try:
         _mission_reset_heal(st)
     except Exception as e:
@@ -451,9 +486,17 @@ def user_title(st, req, ctx):
     except Exception as e:
         print(f'gear exchange heal failed for {st.user_id}: {e!r}')
     try:
+        _plate_owned_heal(st)
+    except Exception as e:
+        print(f'title plate heal failed for {st.user_id}: {e!r}')
+    try:
         _craft_slot_heal(st)
     except Exception as e:
         print(f'craft slot heal failed for {st.user_id}: {e!r}')
+    try:
+        _gb_guild_heal(st)
+    except Exception as e:
+        print(f'guild battle guild failed for {st.user_id}: {e!r}')
     login_bookkeeping(st)
     _link_data_done(st)
     repair_lineups(st)
@@ -536,7 +579,7 @@ def mdx(table, *cols):
     return ent[1]
 from engine import storage
 CFG_PATH = storage.path('res', 'settings.json', root=HERE)
-CFG = {'materia': {'quality_up_chance': 0.15, 'extra_param_chance': 0.5, 'value_bias': 0.0}, 'drop_rolls': 2, 'exp_mult': 1, 'minor_guild_medals_per_stamina': 10, 'coop_medals_per_stamina': 1, 'uncapped_items': [52]}
+CFG = {'materia': {'quality_up_chance': 0.15, 'extra_param_chance': 0.5, 'value_bias': 0.0}, 'drop_rolls': 2, 'exp_mult': 1, 'minor_guild_medals_per_stamina': 10, 'coop_medals_per_stamina': 1, 'crisis_medals_per_stamina': 1, 'guild_medals_per_stamina': 1, 'guild_rare_medals_per_stamina': 0.25, 'uncapped_items': [52, 13]}
 if os.path.isfile(CFG_PATH):
     try:
         CFG.update(json.load(open(CFG_PATH)))
@@ -941,6 +984,7 @@ def grant_reward(st, tx, reward_id, count, infos=None):
     elif rtype == RT_HONOR:
         if not st.get('user_honor_list', target):
             tx.upsert('user_honor_list', st.new_row('user_honor_list', honor_id=target, get_datetime=now_ms()))
+        _plate_mark_owned(st, tx, (target,))
     elif rtype in (RT_GUILD_EXP, RT_GUILD_BONUS_EXP):
         _grant_guild_exp(st, tx, rtype, count)
     elif rtype == 2:
@@ -1952,6 +1996,67 @@ def _rank_drops(st, tx, rank_group, mult, infos, chars, items=1.0):
         times = max(times, round(times * items))
     if best[2]:
         grant_reward_set(st, tx, best[2], times, infos)
+# #104 event bonuses: an event's m_event_base col 21 EventBonusEffectGroupId -> m_event_bonus_effect rows [0 Id, 1 group,
+# 2 ItemId, 3 MaxEventBonusEffectCoefficientPermil, 4 weapon group, 5 costume group, 6 LockConditionSetId, 7 Priority].
+# The game shows the party's bonus but leaves the extra drops to the server (event_bonus_reward_infos), worked out as the
+# party screen does: every active member's six weapon slots and three outfits (not the look), each adding its row's
+# per-mille; a weapon's row is the highest tier it has reached (m_event_bonus_effect_weapon_bonus). Capped at the row's
+# maximum, the bonus is that share of the stage's drops of the row's item, rounded down.
+_WEAPON_SLOTS = ('weapon_id0', 'weapon_id1', 'sub_weapon_id0', 'sub_weapon_id1', 'sub_weapon_id2', 'legendary_weapon_id0')
+_OUTFIT_SLOTS = ('costume_id', 'sub_costume_id0', 'sub_costume_id1')
+LEGENDARY = 101
+
+def _event_bonus_effects(event_id, now):
+    eb = mdx('m_event_base', 0).get((event_id,))
+    group = eb[21] if eb and len(eb) > 21 else 0
+    return [r for r in md('m_event_bonus_effect') if r[1] == group and _condset_ok(r[6], now)] if group else []
+
+def _weapon_bonus(effect, w, now):
+    """The per-mille an owned weapon adds to one bonus row: its tier row with the highest rarity, upgrade type and count
+    that the weapon has reached (Rank counts its upgrades, Limit counts 10 more)."""
+    row = next((r for r in md('m_event_bonus_effect_weapon') if r[2] == effect[4] and r[1] == w.weapon_id
+                and _condset_ok(r[4], now)), None)
+    if row is None:
+        return 0
+    mw = mdx('m_weapon', 0).get((w.weapon_id,))
+    legendary = bool(mw and len(mw) > 21 and mw[21])
+    tiers = [t for t in md('m_event_bonus_effect_weapon_bonus') if t[1] == row[3] and (t[2] == LEGENDARY) == legendary]
+    rank = P.Command_Enums_WeaponUpgradeType.Value('Command_Enums_WeaponUpgradeType_Rank')
+    score = w.upgrade_count if w.weapon_upgrade_type == rank else 10 + w.upgrade_count
+    for t in sorted(tiers, key=lambda t: (t[2], t[3], t[4]), reverse=True):
+        if t[2] <= w.rarity_type and (0 if t[3] == rank else 10) + t[4] <= score:
+            return t[5]
+    return 0
+
+def _party_event_bonus(st, party_id, effect, now):
+    total = 0
+    for m in st['user_party_member_list'].values():
+        if m.party_member_id // 10 != party_id or not m.character_id or not m.is_active:
+            continue
+        for f in _WEAPON_SLOTS:
+            w = st.get('user_weapon_list', getattr(m, f)) if getattr(m, f) else None
+            if w is not None:
+                total += _weapon_bonus(effect, w, now)
+        for f in _OUTFIT_SLOTS:
+            cid = getattr(m, f)
+            if cid:
+                total += next((r[3] for r in md('m_event_bonus_effect_costume') if r[1] == effect[5] and r[2] == cid
+                               and _condset_ok(r[4], now)), 0)
+    return min(total, effect[3])
+
+def _event_bonus_drops(st, tx, event_id, party_id, drops, infos, now):
+    """The bonus share of the stage's item drops (drops: the battle's reward_infos) for the stage's own event, so a
+    stage on a list card pays its event's bonus."""
+    counts = {}
+    for d in drops:
+        if d.reward_type == RT_ITEM:
+            counts[d.target_id] = counts.get(d.target_id, 0) + d.count
+    for effect in _event_bonus_effects(event_id, now):
+        n = counts[effect[2]] * _party_event_bonus(st, party_id, effect, now) // 1000 if effect[2] in counts else 0
+        if n > 0:
+            add_item(st, tx, effect[2], n)
+            ri = infos.add()
+            ri.reward_type, ri.target_id, ri.count = RT_ITEM, effect[2], n
 import threading as _thr
 _SKIP_ALL_CHARS = _thr.local()
 
@@ -1961,6 +2066,10 @@ def _end_common(st, tx, body, q, battle_id, stage_stamina=0, win_exp=True, all_c
     status = st.one('user_status_list')
     chars = list(st['user_character_list'].values()) if all_chars else _party_characters(st, e.party_id) if e else []
     xchars = list(st['user_character_list'].values()) if getattr(_SKIP_ALL_CHARS, 'on', False) else chars
+    if hasattr(body, 'battle_result'):
+        # sent even when it would be empty: the game waits on it after every fight, and a replayed story fight (guest
+        # party, so no characters, and nothing but its first-clear reward) otherwise ends on a black screen (10-21)
+        body.battle_result.SetInParent()
     for c in xchars:
         body.battle_result.before_user_characters.add().CopyFrom(c)
     if hasattr(body, 'before_exp'):
@@ -2027,14 +2136,25 @@ def _end_common(st, tx, body, q, battle_id, stage_stamina=0, win_exp=True, all_c
     return (e, win, mult, chars, status)
 MINOR_GUILD_MEDAL = 52
 COOP_MEDAL = 13
-_BATTLE_MEDALS = ((MINOR_GUILD_MEDAL, 'minor_guild_medals_per_stamina'), (COOP_MEDAL, 'coop_medals_per_stamina'))
+CRISIS_MEDAL = 12
+GUILD_MEDAL, GUILD_RARE_MEDAL = 49, 50
+_BATTLE_MEDALS = ((MINOR_GUILD_MEDAL, 'minor_guild_medals_per_stamina'), (COOP_MEDAL, 'coop_medals_per_stamina'),
+                  (CRISIS_MEDAL, 'crisis_medals_per_stamina'), (GUILD_MEDAL, 'guild_medals_per_stamina'),
+                  (GUILD_RARE_MEDAL, 'guild_rare_medals_per_stamina'))
 
 def _battle_medals(st, tx, body, stamina):
     """Square's servers gave Minor Guild Medals and Co-op Medals for co-op, which this server can't host. Solo wins that
     cost stamina give CFG['minor_guild_medals_per_stamina'] and CFG['coop_medals_per_stamina'] per stamina point
-    instead, shown with the battle's rewards. add_item applies each item's per-period limit (Co-op Medal: 9,999 a week)."""
+    instead, shown with the battle's rewards. Crisis Medals came only once each (first story clears, treasure,
+    missions), so CFG['crisis_medals_per_stamina'] keeps the Crisis Medal exchange buyable (#95). Guild Medals and Guild
+    Rare Medals came only from guild battles, which need Square's servers: CFG['guild_medals_per_stamina'] and
+    CFG['guild_rare_medals_per_stamina']. A rate can be a fraction: the part below one medal is a chance of one more
+    (0.25 on a 10-stamina win: 2, or 3 one time in two), so short fights still earn it at the same rate. add_item applies each item's per-period limit (Co-op Medal: 9,999 a week)."""
     for item_id, key in _BATTLE_MEDALS:
-        n = int(stamina * CFG.get(key, 0))
+        earned = stamina * CFG.get(key, 0)
+        n = int(earned)
+        if random.random() < earned - n:
+            n += 1
         if n <= 0:
             continue
         row = st.get('user_item_list', item_id)
@@ -2128,6 +2248,11 @@ def event_solo_battle_end(st, req, ctx):
             o = _stage_copies().get(q.event_battle_id)
             orow = st.get('user_event_solo_battle_list', o) if o else None
             first = row.total_win_count == 0 and (not (orow and orow.total_win_count > 0))
+            partners = _stage_partners(q.event_battle_id)
+            for p in partners:    # #102: a list-card copy and its original share the day's tries (the later one counts)
+                prow = st.get('user_event_solo_battle_list', p)
+                if prow and prow.last_challenge_reset_datetime > row.last_challenge_reset_datetime:
+                    row.challenge_count, row.last_challenge_reset_datetime = prow.challenge_count, prow.last_challenge_reset_datetime
             _daily_count(row, 'challenge_count', 'last_challenge_reset_datetime', now, (o_stage or stage)[12] if o_stage or stage else 1)
             row.total_win_count += 1
             old_high = row.high_score if row.total_win_count > 1 else -1
@@ -2136,12 +2261,13 @@ def event_solo_battle_end(st, req, ctx):
                 row.high_score = dmg
             row.high_rank_type = max(row.high_rank_type, rank)
             tx.upsert('user_event_solo_battle_list', row)
-            for p in _stage_partners(q.event_battle_id):    # a list-card copy and its original clear together
+            for p in partners:    # a list-card copy and its original clear together, and use the same tries
                 prow = st.get('user_event_solo_battle_list', p) or st.new_row('user_event_solo_battle_list', event_solo_battle_id=p)
                 if prow.total_win_count == 0:
                     prow.total_win_count = 1
                     prow.high_rank_type = max(prow.high_rank_type, rank)
-                    tx.upsert('user_event_solo_battle_list', prow)
+                prow.challenge_count, prow.last_challenge_reset_datetime = row.challenge_count, row.last_challenge_reset_datetime
+                tx.upsert('user_event_solo_battle_list', prow)
             _score_battle_missions(st, tx, q.event_battle_id, rank, dmg)
             if sb:
                 _score_battle_result(st, tx, sb, old_high, dmg, rank, body)
@@ -2154,6 +2280,8 @@ def event_solo_battle_end(st, req, ctx):
                 _award_sync(st, tx)
             if stage:
                 _rank_drops(st, tx, stage[6], mult, body.battle_result.reward_infos, chars)
+                if e:
+                    _event_bonus_drops(st, tx, ev_id, e.party_id, body.battle_result.reward_infos, body.event_bonus_reward_infos, now)
             _rare_drops(st, tx, bid, q.battle_enemy_results, mult, body.battle_result.rare_enemy_reward_infos, now)
             if stage and len(stage) > 26 and e:
                 _memoria_win(st, tx, e.party_id, stage[8] * mult, stage[25], stage[26], stage[24], q.event_battle_id, mult, now, br=body.battle_result)
@@ -2306,6 +2434,8 @@ def story_battle_end(st, req, ctx):
             tx.upsert('user_episode_battle_list', st.new_row('user_episode_battle_list', story_episode_id=q.episode_id, story_battle_id=q.story_battle_id))
             _drops(st, tx, bid, q.battle_enemy_results, 1, body.battle_result.first_reward_infos)
             _battle_first_to_gifts(st, tx, ctx, body.battle_result.first_reward_infos)
+        if win:
+            _ste_credit(st, tx, q.episode_id)
     return _resp(tx, 'post_pvt_story_battle_end', body)
 HANDLERS.update({'/api/pvt/event/solo/battle/start': event_solo_battle_start, '/api/pvt/event/solo/battle/end': event_solo_battle_end, '/api/pvt/tower/battle/start': tower_battle_start, '/api/pvt/tower/battle/end': tower_battle_end, '/api/pvt/area/solo/battle/start': area_solo_battle_start, '/api/pvt/area/solo/battle/end': area_solo_battle_end, '/api/pvt/story/battle/start': story_battle_start, '/api/pvt/story/battle/end': story_battle_end})
 
@@ -2424,10 +2554,33 @@ def _wr():
             _WR.setdefault(r[2], set()).add(r[1])
     return _WR
 
+GACHA_TICKET_EXCHANGE = 106    # m_gacha col 1: the draw-ticket banners, whose lists hold event and limited weapons
+
+def _ticket_only_sets():
+    """Weapon lists that only draw-ticket banners use (m_gacha col 1 = 106). Festival of Gratitude's exchange ticket
+    lists hold event-exchange weapons (Holiday Cheer, Oven Mitts, ...) and one-banner limited ones (Erdrick's Sword)."""
+    gachas = mdx('m_gacha', 0)
+    groups = mdx('m_gacha_step_group', 0)
+    kinds = {}
+    for g in gachas.values():
+        for sid in (g[26], g[28]):
+            if sid:
+                kinds.setdefault(sid, set()).add(g[1])
+    for s in md('m_gacha_step'):
+        grp = groups.get((s[3],))
+        g = gachas.get((grp[1],)) if grp else None
+        for sid in (s[16], s[18]):
+            if sid:
+                kinds.setdefault(sid, set()).add(g[1] if g else 0)
+    return {sid for sid, k in kinds.items() if k == {GACHA_TICKET_EXCHANGE}}
+
 def _fb():
+    """The pool for a banner whose own weapon list the game data no longer has: every weapon on the lists that do
+    remain, by rarity, except the draw-ticket lists (their event and limited weapons were never on a normal banner)."""
     if not _FB:
+        skip = _ticket_only_sets()
         for r in md('m_auto_gacha_weapon_probability'):
-            if r[1] == GACHA_NORMAL:
+            if r[1] == GACHA_NORMAL and r[0] not in skip:
                 _FB.setdefault(r[2], set()).add(r[3])
         for k in list(_FB):
             _FB[k] = sorted(_FB[k])
@@ -2455,6 +2608,13 @@ def _pick_weapon_square(rarity, wrows, prows, featured):
         pool = [r for r in wrows if r[2] == rarity and r[1] == GACHA_NORMAL] or [r for r in wrows if r[2] == rarity]
         if pool:
             return _roll(pool, 4)[3]
+        # The banner's rates give this rarity but its list has none (the Festival of Gratitude Limit Break and
+        # Crossover draws list 3★, 4★ and Legendary only, yet roll a 5★ 7.5% of the time): any of the banner's own
+        # weapons that comes in this rarity, not the pool of every banner.
+        if rarity != 101:
+            own = sorted({r[3] for r in wrows if r[2] != 101} & _wr().get(rarity, set()))
+            if own:
+                return random.choice(own)
     F = [w for w in featured if w in _wr().get(rarity, ())]
     if F:
         if rarity == 3:
@@ -3001,12 +3161,14 @@ def _guide_advance(st, tx, gid, t):
     _tx_announce(tx, m[0], max(hit))
 
 def _announce_step(st, tx, m, row, old, t):
+    """The blue popup at the top of the screen (other_info.mission_achieved_list) for a step the mission just reached:
+    any mission's, but a guide group's only for its current mission. Only the reply of the transaction that moved it
+    carries the popup, so login catch-ups, which run in transactions of their own, stay silent."""
     gid = _set_group(m[1])
-    if not _is_guide(gid):
-        return
-    cur = _guide_current(st, gid, t)
-    if cur is None or cur[0] != m[0]:
-        return
+    if _is_guide(gid):
+        cur = _guide_current(st, gid, t)
+        if cur is None or cur[0] != m[0]:
+            return
     hit = [x for x in _steps_of(m[0]) if old < x <= row.progress_count]
     if not hit or row.notified_progress_count >= max(hit):
         return
@@ -4251,7 +4413,9 @@ def materia_enhance(st, req, ctx):
         mission_event(st, tx, 'ProgressMateriaEnhance', sum(q.ingredient_item_map.values()) + len(q.ingredient_materia_id_list))
         body.consumption_gil = gil
         body.after_user_materia.CopyFrom(m)
-        body.result_type = rt
+        # The materia screen knows two results, Normal and Good: it reads Great or Excellent as no level-up at all and
+        # waits on an animation that never plays, so the game sits on the upgrade screen. Their bonus still counts.
+        body.result_type = min(rt, 1)
     return _resp(tx, 'post_pvt_materia_enhance', body)
 
 def materia_evolve(st, req, ctx):
@@ -4971,6 +5135,7 @@ def story_result(st, req, ctx):
             row.story_party_mode_clear_datetime = now
         tx.upsert('user_episode_list', row)
         mission_event(st, tx, 'SetStoryReadEpisode', 1, q.episode_id)
+        _ste_credit(st, tx, q.episode_id, body.reward_infos)
         if first and ep:
             obt = P.Command_Enums_RewardObtainType.Value('Command_Enums_RewardObtainType_FirstStoryParty')
             if free and ep[6]:
@@ -5634,6 +5799,13 @@ def daily_quest_end(st, req, ctx):
         if dq and q.battle_result_type == WIN:
             _dq_pay(st, tx, dq, body.reward_infos, body.judge_reward_infos)
             _dq_finish(st, tx, dq, body.battle_result)
+        else:
+            # Retire or loss: the client waits for battle_result on every outcome, as the solo battle end always sends
+            # it (before/after characters, no gain). Without it the battle screen never closes.
+            body.battle_result.SetInParent()
+            for c in st['user_character_list'].values():
+                body.battle_result.before_user_characters.add().CopyFrom(c)
+                body.battle_result.after_user_characters.add().CopyFrom(c)
     return _resp(tx, 'post_pvt_daily_quest_end', body)
 HANDLERS.update({'/api/pvt/daily/quest/setting': daily_quest_setting, '/api/pvt/daily/quest/start': daily_quest_start, '/api/pvt/daily/quest/end': daily_quest_end})
 _STOCK = {1: 'r_count', 2: 'sr_count', 3: 'ssr_count'}
@@ -5695,6 +5867,18 @@ def _displays():
 def _display_of(uid):
     return next((d for d, u in _displays().items() if str(u) == str(uid)), None)
 
+def square_display_id(uid):
+    # Square's friend ID: the uid as 8 little-endian bytes XOR the battle_user_id key, base32 in the game's alphabet
+    # (docs/ID-GENERATION.md). None for a uid that is not a 64-bit number.
+    import base64
+    try:
+        raw = int(uid).to_bytes(8, 'little')
+    except (TypeError, ValueError, OverflowError):
+        return None
+    raw = bytes(a ^ b for a, b in zip(raw, bytes.fromhex('4b10bc26a8e26257')))
+    return base64.b32encode(raw).decode().rstrip('=').translate(
+        str.maketrans('ABCDEFGHIJKLMNOPQRSTUVWXYZ234567', '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'))
+
 def display_id_for(uid):
     with _SOCIAL_LOCK:
         d = _displays()
@@ -5702,10 +5886,9 @@ def display_id_for(uid):
         if have:
             return have
         alpha = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-        while True:
+        new = square_display_id(uid)
+        while new is None or new in d:
             new = ''.join((random.choice(alpha) for _ in range(13)))
-            if new not in d:
-                break
         d[new] = str(uid)
         _jsave(_DISP, d)
         return new
@@ -6319,6 +6502,117 @@ def _episode_clear(st, tx, ep_id, infos):
     row.clear_count += 1
     tx.upsert('user_event_scenario_episode_list', row)
     mission_event(st, tx, 'SetEventStoryRead', 1, ep_id)
+
+# A Story-title copy (engine/storytitles.py: Event Stories / Crossover Stories, 88xxxxxx) clears the event episode it copies.
+# The events' "Play ..." missions are SetEventStoryRead on the EVENT episode (Flash of Destiny's "Play "Carving Light"" =
+# 303607), so reading the copy never counted. _episode_clear pays the event episode's first reward once, whichever way
+# it is read (the copies pay none), and raises the mission. Copies read before this are caught up at login.
+_STE = {}
+
+def _story_title_event_map():
+    """Story-title episode -> the event scenario episode it copies. A chapter is one event's scenario in order: its match
+    is the event's own section (m_event_base col 4) whose scenes play the same dungeons (Story copy = event dungeon -
+    200000) and whose fights fight the same battles. Re-runs sharing every dungeon and battle (Reawakened) go by
+    order: chapter ids are numbered oldest first, and the lower event id is the older run."""
+    src = md('m_story_episode')
+    if _STE.get('src') is src:
+        return _STE['map']
+    chapters = sorted(r[0] for r in md('m_story_chapter') if r[1] in (8, 9))
+    by_ch = {}
+    for e in src:
+        if e[1] in chapters and e[0] // 1000000 == 88 and e[0] % 1000:
+            by_ch.setdefault(e[1], []).append(e)
+    battle_of = {r[0]: r[1] for r in md('m_story_battle')}
+    stages_of_battle = {}
+    for s in md('m_event_solo_battle'):
+        stages_of_battle.setdefault(s[5], set()).add(s[0])
+    own = {r[4]: r[0] for r in md('m_event_base') if r[4]}
+    secs = {}
+    for e in md('m_event_scenario_episode'):
+        if e[1] in own:
+            secs.setdefault(e[1], []).append(e)
+    for v in secs.values():
+        v.sort(key=lambda e: e[4])
+
+    def key(e, story):
+        if story:
+            return ('b', frozenset(stages_of_battle.get(battle_of.get(e[15]), ()))) if e[15] else ('d', e[4] + 200000)
+        return ('s', e[11]) if (not e[3] and e[11]) else ('d', e[3])
+
+    def same(a, b):
+        return (a[0] == 'b' and b[0] == 's' and b[1] in a[1]) or (a[0] == b[0] == 'd' and a[1] == b[1])
+    m = {}
+    taken = set()
+    for cid in chapters:
+        eps = sorted(by_ch.get(cid, []), key=lambda e: e[5])
+        if not eps:
+            continue
+        ks = [key(e, True) for e in eps]
+        cand = sorted((sid for sid, sc in secs.items() if sid not in taken and len(sc) == len(eps)
+                       and all(same(a, key(b, False)) for a, b in zip(ks, sc))), key=lambda sid: own[sid])
+        if not cand:
+            continue
+        taken.add(cand[0])
+        for e, ev in zip(eps, secs[cand[0]]):
+            m[e[0]] = ev[0]
+    _STE.update(src=src, map=m)
+    return m
+
+def _ste_credit(st, tx, story_ep, infos=None):
+    """A Story-title copy was cleared: clear its event episode once (nothing for any other episode)."""
+    ev = _story_title_event_map().get(story_ep) if story_ep else None
+    if not ev:
+        return False
+    row = st.get('user_event_scenario_episode_list', ev)
+    if row and row.clear_count:
+        return False
+    _episode_clear(st, tx, ev, infos)
+    return True
+
+def _story_title_events_heal(st):
+    m = _story_title_event_map()
+    todo = []
+    for k, v in st.tables['user_episode_list'].items():
+        ev = m.get(k[0])
+        if ev and (v.story_party_mode_clear_datetime or v.free_party_mode_clear_datetime):
+            row = st.get('user_event_scenario_episode_list', ev)
+            if not (row and row.clear_count):
+                todo.append(k[0])
+    if not todo:
+        return 0
+    with st.transaction('story titles: event episodes already read') as tx:
+        n = sum(_ste_credit(st, tx, e) for e in todo)
+    print(f'story title events heal: {st.user_id} {n} event episode(s)')
+    return n
+
+def _story_entry_heal(st):
+    """The last story episode entered (user_episode_entry_list, and the Story dungeon's content_id) may be one the Story
+    titles no longer build, such as the crossovers' old "Entrance" 88901000 (engine/storytitles.py). Home looks it up
+    while loading and the game waits on "Connecting" forever. Such an entry moves to the first episode left in its
+    chapter (Story-title episodes are 88000000 + chapter * 1000 + n), or else goes."""
+    eps = mdx('m_story_episode', 0)
+    first = {}
+    for e in md('m_story_episode'):
+        if e[1] not in first or e[5] < first[e[1]][5]:
+            first[e[1]] = e
+    fixes = []
+    for table, row, field in (('user_episode_entry_list', st.one('user_episode_entry_list'), 'episode_id'),
+                              ('user_dungeon_entry_list', st.get('user_dungeon_entry_list', DUNGEON_STORY), 'content_id')):
+        eid = getattr(row, field, 0) if row is not None else 0
+        if eid and (eid,) not in eps:
+            e = first.get(eid // 1000 % 1000) if eid // 1000000 == 88 else None
+            fixes.append((table, row, field, eid, e[0] if e else 0))
+    if not fixes:
+        return 0
+    with st.transaction('story: entered episode no longer built') as tx:
+        for table, row, field, eid, to in fixes:
+            print(f'story entry heal: {st.user_id} {table} episode {eid} -> {to or "none"}')
+            if to or table == 'user_dungeon_entry_list':
+                setattr(row, field, to)
+                tx.upsert(table, row)
+            else:
+                tx.delete(table, row)
+    return len(fixes)
 _BATTLE_EP = {}
 
 def _battle_episode(stage_id):
@@ -6426,6 +6720,51 @@ def _achieve_set_mission(st, tx, m):
         f = f'{pre}_mission_set_idx_flags{k}'
         setattr(s, f, _flag_or(getattr(s, f), m[2]))
     tx.upsert('user_mission_set_list', s)
+
+LB_GROUP_TYPE = 7           # m_mission_group col 1: a character's Limit Break missions (col 11 = the LB)
+
+def _from_never_crisis(st):
+    """True for an account imported from a Never Crisis account.json (editor/nevercrisis.py notes it in info.json)."""
+    try:
+        meta = json.load(open(os.path.join(st.folder, 'info.json')))
+    except (OSError, TypeError, ValueError):
+        return False
+    return any(str(x).startswith('nevercrisis:') for x in meta.get('sources') or [])
+
+def _special_missions_received_heal(st):
+    """On accounts imported from Never Crisis: a Limit Break or summon Pact / Unlock mission group whose skill
+    (m_mission_group col 11) the account owns has been received. Imports from before editor/nevercrisis.py moved the
+    flag to the field this game reads (FIELD_MOVES) have every is_received_special_mission off, so the game showed
+    every LB and summon as having no missions done or set. A group's mission still set on its character or the
+    summon slot is cleared, as receiving it does. -> groups marked."""
+    if not st.folder or not _from_never_crisis(st):
+        return 0
+    groups = _mt_index()['groups']
+    owned = {k[0] if isinstance(k, tuple) else k for k in st['user_skill_special_list'].keys()}
+    marked = []
+    for gid, g in groups.items():
+        if g[1] in (LB_GROUP_TYPE, SUMMON_PACT_GROUP_TYPE) and g[11] and g[11] in owned:
+            row = st.get('user_mission_group_list', gid)
+            if row is None or not row.is_received_special_mission:
+                marked.append((gid, row))
+    if not marked:
+        return 0
+    done = {gid for gid, _ in marked}
+    with st.transaction('special missions already received') as tx:
+        for gid, row in marked:
+            row = row or st.new_row('user_mission_group_list', mission_group_id=gid)
+            row.is_received_special_mission = True
+            tx.upsert('user_mission_group_list', row)
+        for c in st['user_character_list'].values():
+            if c.mission_group_id in done:
+                c.mission_group_id = 0
+                tx.upsert('user_character_list', c)
+        slot = st.one('user_mission_special_summon_list')
+        if slot is not None and slot.mission_group_id in done:
+            slot.mission_group_id = 0
+            tx.upsert('user_mission_special_summon_list', slot)
+    print(f'special missions heal: {st.user_id}: {len(marked)} LB / summon mission group(s) marked received')
+    return len(marked)
 
 def _summon_pact_on_character_heal(st):
     """Saves from before the summon fix can hold a summon's Pact group as a character's LB mission; clear those."""
@@ -6587,21 +6926,28 @@ def _guild_reply(st, tx, cap, body_field=None):
         getattr(r, body_field).SetInParent()
     return r
 
-def _guild_login_mission(st, tx):
-    mt = MTYPE.get('ProgressGuildLogin', 0)
-    t = now_ms()
-    groups = _mt_index()['groups']
-    daily = [m for m in _mt_index().get(mt, []) if (groups.get(_set_group(m[1])) or [0, 0])[1] == 2 and _group_open(_set_group(m[1]), t)]
-    if not daily:
-        return
-    top = max((_set_group(m[1]) for m in daily))
-    daily = [m for m in daily if _set_group(m[1]) == top]
-    if any((st.get('user_mission_list', m[0]) is not None and st.get('user_mission_list', m[0]).progress_count for m in daily)):
-        return
-    for m in daily:
-        row = st.get('user_mission_list', m[0]) or st.new_row('user_mission_list', mission_id=m[0])
-        row.progress_count += 1
-        tx.upsert('user_mission_list', row)
+def _guild_login_mission(st, tx, member, last_visit):
+    """ProgressGuildLogin ("Log in to a guild", "... for 2 days") counts the first guild visit of each game day (or
+    since joining), in every open group: the daily missions, and the panels' and events' (#108: only the daily ones
+    counted). last_visit is the member's last_active_datetime before this visit."""
+    if last_visit > member.join_datetime and game_day(last_visit) >= game_day(now_ms()):
+        return False
+    mission_event(st, tx, 'ProgressGuildLogin', 1)
+    return True
+
+GUILD_LOGIN_BONUS_EXP = 200     # Square's flat daily Guild Login Bonus from 2024-07-19 (it was 100-7,777 at random)
+
+def _guild_login_bonus(st, tx, body):
+    """gameplay-settings.json "guild_login_animation": true plays the daily Guild Login Bonus on the first guild visit
+    of the day and adds its Guild EXP. Off by default, as ECR has always skipped it."""
+    _grant_guild_exp(st, tx, RT_GUILD_EXP, GUILD_LOGIN_BONUS_EXP)
+    ex = st.one('shared_guild_exp_list')
+    if ex is not None:                               # the reply already holds the guild's rows: show the new EXP
+        ex.level_exp += GUILD_LOGIN_BONUS_EXP
+        tx.upsert('shared_guild_exp_list', ex)
+    ri = body.guild_login_bonus_reward_infos.add()
+    ri.reward_type, ri.count = RT_GUILD_EXP, GUILD_LOGIN_BONUS_EXP
+    body.guild_login_bonus_direction_type = P.Command_Enums_GuildLoginBonusDirectionType_Normal
 
 def _guild_view(field, edit=None):
 
@@ -6617,23 +6963,30 @@ def _guild_view(field, edit=None):
                         _guild_save(gid, g)
                 if g:
                     _guild_push(st, tx, g)
+                own = last_visit = None
                 if g:
                     own = st.one('shared_guild_member_list')
                     if own is not None and own.guild_id == gid:
                         if field == 'post_pvt_guild_top':
-                            own.last_active_datetime = now_ms()
+                            last_visit, own.last_active_datetime = own.last_active_datetime, now_ms()
                         tx.upsert('shared_guild_member_list', own)
                     ub = st.one('user_guild_base_list')
                     if ub is not None:
                         tx.upsert('user_guild_base_list', ub)
+                bonus = None
                 if g and field == 'post_pvt_guild_top':
-                    _guild_login_mission(st, tx)
+                    if last_visit is not None and _guild_login_mission(st, tx, own, last_visit) and CFG.get('guild_login_animation') is True:
+                        bonus = P.Command_ApiNetwork_Api_PostPvtGuildTopResponse()
+                        _guild_login_bonus(st, tx, bonus)
                     mission_event(st, tx, 'SetGuildJoin', 1)
         r = _guild_reply(st, tx, cap, field)
         if field == 'post_pvt_guild_top':
             b = r.post_pvt_guild_top
             b.ClearField('guild_login_bonus_reward_infos')
             b.ClearField('guild_login_bonus_direction_type')
+            if gid and bonus is not None:
+                b.guild_login_bonus_reward_infos.extend(bonus.guild_login_bonus_reward_infos)
+                b.guild_login_bonus_direction_type = bonus.guild_login_bonus_direction_type
         if field == 'post_pvt_guild_get_self' and gid and g:
             base = next(iter(g.get('shared_guild_base_list', [])), None)
             if base is not None:
@@ -7152,6 +7505,52 @@ def _gear_owned_heal(st):
         n = _gear_mark_owned(st, tx, owned)
     if n:
         print(f'gear exchange heal: {st.user_id} {n} row(s) marked owned')
+    return n
+
+# #95: title plates once won only by ranking placement are sold once each (recipe "shop_item_additions"). A plate the
+# player already has shows as bought there, as an owned costume does in the Gear Exchange: one-time rows (max 1, no
+# refill) selling one title.
+_PLATE_IDX = {}
+
+def _plate_rows_by_honor():
+    si = md('m_shop_item')
+    if _PLATE_IDX.get('src') is not si:
+        rels = _rs_index()['rel']
+        rw = mdx('m_reward', 0)
+        by = {}
+        for it in si:
+            if it[3] != 1 or (len(it) > 17 and it[17]):
+                continue
+            rr = rels.get(it[6], [])
+            r = rw.get((rr[0][2],)) if len(rr) == 1 else None
+            if r and r[1] == RT_HONOR:
+                by.setdefault(r[2], []).append(it[0])
+        _PLATE_IDX.update(src=si, by=by)
+    return _PLATE_IDX['by']
+
+def _plate_mark_owned(st, tx, honor_ids):
+    by = _plate_rows_by_honor()
+    n = 0
+    for h in honor_ids:
+        for sid in by.get(h, ()):
+            us = st.get('user_shop_item_list', sid)
+            if us is not None and us.purchase_count:
+                continue
+            us = us or st.new_row('user_shop_item_list', shop_item_id=sid)
+            us.purchase_count = 1
+            tx.upsert('user_shop_item_list', us)
+            n += 1
+    return n
+
+def _plate_owned_heal(st):
+    owned = [r.honor_id for r in st['user_honor_list'].values()]
+    by = _plate_rows_by_honor()
+    if not any(h in by for h in owned):
+        return 0
+    with st.transaction('title plates: owned plates') as tx:
+        n = _plate_mark_owned(st, tx, owned)
+    if n:
+        print(f'title plate heal: {st.user_id} {n} row(s) marked owned')
     return n
 
 def _guild_mutate(st, fn):
@@ -8206,12 +8605,49 @@ def guild_member_list_filled(st, req, ctx):
     return r
 HANDLERS.update({'/api/pvt/guild/top': guild_top_filled, '/api/pvt/guild/get/self': guild_get_self_filled, '/api/pvt/guild/member/list': guild_member_list_filled})
 
+# Custom notices: gameplay-settings.json "notices", a list of {"title", "body" (text, or a list of lines), "type"
+# (an AnnouncementType name such as Info, Update, ImportantInfo; default Info), "date" ("YYYY-MM-DD" or
+# "YYYY-MM-DD HH:MM", local time), "id" (default its place in the list)}. A notice has no end date: it shows for as long
+# as it is listed. The game draws a notice's page from JSON blocks (Command.OutGame.Announcement
+# ResponseAnnouncementDetailData); each notice here is one body block.
+_NOTICE_BODY, _NOTICE_TOP_LEFT = 2, 257          # AnnouncementBlockType.Body, TextAlignmentOptions.TopLeft
+
+def _notices():
+    out = []
+    kinds = {k.split('_')[-1].lower(): v for k, v in P.Command_Enums_AnnouncementType.items()}
+    for n, raw in enumerate(CFG.get('notices') or (), 1):
+        if not isinstance(raw, dict) or not raw.get('title'):
+            continue
+        kind = str(raw.get('type') or 'Info').replace(' ', '')
+        when = 0
+        for fmt in ('%Y-%m-%d %H:%M', '%Y-%m-%d'):
+            try:
+                when = int(time.mktime(time.strptime(str(raw.get('date', '')), fmt)) * 1000)
+                break
+            except ValueError:
+                pass
+        if not when:
+            when = int(os.path.getmtime(CFG_PATH) * 1000) if os.path.isfile(CFG_PATH) else now_ms()
+        body = raw.get('body', '')
+        out.append({'id': int(raw.get('id') or n), 'type': kinds.get(kind.lower(), kinds['info']),
+                    'title': str(raw['title']), 'when': when,
+                    'body': '\n'.join(map(str, body)) if isinstance(body, list) else str(body)})
+    return sorted(out, key=lambda x: -x['when'])
+
+def _notice_summary(summary, n):
+    summary.announcement_id, summary.announcement_type, summary.title = n['id'], n['type'], n['title']
+    summary.start_datetime = n['when']
+
 def announcement_list(st, req, ctx):
+    q = req.post_announcement_list
     with st.transaction('announcement/list') as tx:
         pass
     r = _resp(tx)
     r.post_announcement_list.SetInParent()
-    r.post_announcement_list.total = 0
+    shown = [n for n in _notices() if not q.announcement_type_list or n['type'] in q.announcement_type_list]
+    r.post_announcement_list.total = len(shown)
+    for n in shown[q.offset:q.offset + q.limit if q.limit else None]:
+        _notice_summary(r.post_announcement_list.announcement_summary_list.add(), n)
     return r
 HANDLERS['/api/announcement/list'] = announcement_list
 import importlib as _il
@@ -8867,6 +9303,16 @@ def guild_leave(st, req, ctx):
                 print(f'guild/leave: {st.user_id} left guild {gid}')
     return _resp(tx, 'post_pvt_guild_leave', P.Command_ApiNetwork_Api_PostPvtGuildLeaveResponse())
 
+def _new_guild_id():
+    taken = set(_all_guilds())
+    gid = _grand.randrange(10 ** 17, 9 * 10 ** 17)
+    while gid in taken:
+        gid = _grand.randrange(10 ** 17, 9 * 10 ** 17)
+    return gid
+
+def _new_guild_tables(gid, name, now, cfg, manual):
+    return {'shared_guild_base_list': [P.Command_Entity_SharedGuildBase(guild_id=gid, name=name, is_manual_approval=manual, guild_style_types_idx_flags0=1, emblem_guild_item_id=cfg[4], home_background_guild_item_id=cfg[5], created_datetime=now, message_edit_datetime=now)], 'shared_guild_exp_list': [P.Command_Entity_SharedGuildExp(guild_id=gid)], 'shared_guild_bonus_list': [P.Command_Entity_SharedGuildBonus(guild_id=gid, guild_bonus_id=cfg[13], level=1, last_reset_datetime=now)], 'shared_guild_item_list': [P.Command_Entity_SharedGuildItem(guild_id=gid, guild_item_id=i, count=1, total_obtain_count=1, get_datetime=now, last_get_datetime=now) for i in (cfg[4], cfg[5])], 'shared_guild_achievement_list': [P.Command_Entity_SharedGuildAchievement(guild_id=gid, guild_achievement_id=102, progress_count=1)]}
+
 def guild_create(st, req, ctx):
     q = req.post_pvt_guild_create
     now = now_ms()
@@ -8879,11 +9325,8 @@ def guild_create(st, req, ctx):
             print(f'guild/create: refused ({st.user_id} in guild {_my_guild(st, None)}, crystals {free}+{paid} vs {cost})')
             return _resp(tx, 'post_pvt_guild_create', P.Command_ApiNetwork_Api_PostPvtGuildCreateResponse())
         with _GUILD_LOCK:
-            taken = set(_all_guilds())
-            gid = _grand.randrange(10 ** 17, 9 * 10 ** 17)
-            while gid in taken:
-                gid = _grand.randrange(10 ** 17, 9 * 10 ** 17)
-            g = {'shared_guild_base_list': [P.Command_Entity_SharedGuildBase(guild_id=gid, name=q.guild_name or 'Guild', is_manual_approval=True, guild_style_types_idx_flags0=1, emblem_guild_item_id=cfg[4], home_background_guild_item_id=cfg[5], created_datetime=now, message_edit_datetime=now)], 'shared_guild_exp_list': [P.Command_Entity_SharedGuildExp(guild_id=gid)], 'shared_guild_bonus_list': [P.Command_Entity_SharedGuildBonus(guild_id=gid, guild_bonus_id=cfg[13], level=1, last_reset_datetime=now)], 'shared_guild_item_list': [P.Command_Entity_SharedGuildItem(guild_id=gid, guild_item_id=i, count=1, total_obtain_count=1, get_datetime=now, last_get_datetime=now) for i in (cfg[4], cfg[5])], 'shared_guild_achievement_list': [P.Command_Entity_SharedGuildAchievement(guild_id=gid, guild_achievement_id=102, progress_count=1)]}
+            gid = _new_guild_id()
+            g = _new_guild_tables(gid, q.guild_name or 'Guild', now, cfg, True)
             _guild_save(gid, g)
         use = min(free, cost)
         if use:
@@ -9027,6 +9470,157 @@ def _gb_high_score_list(field, own_guild_only):
         return r
     return h
 HANDLERS.update({'/api/pvt/event/guild/ranking/battle/high/score/list': _gb_high_score_list('post_pvt_event_guild_ranking_battle_high_score_list', False), '/api/pvt/event/guild/ranking/battle/guild/high/score/list': _gb_high_score_list('post_pvt_event_guild_ranking_battle_guild_high_score_list', True)})
+
+# Guild Battle mock fights for an old event picked in the launcher (engine/seasons.py opens its dates). The game asks
+# Square's battle server for the boss's shared HP; the PC patch (tools/scoreboss.py patch_guild_practice) fights in the
+# game instead and packs the damage into the end request's battle id, as the Max Damage Challenge does. Every mock
+# fight starts at full HP and scores its damage; the best score is the in-game high score.
+GB_DAMAGE_SHIFT = 20
+GB_FULL = 10000
+GB_GUILD_NAME = 'Reawakened'
+GB_SUCCESS = P.Command_Enums_GuildBattleResponseType.Value('Command_Enums_GuildBattleResponseType_Success')
+GB_COMPLETE = P.Command_Enums_EventGuildRankingBattleEndStatusType.Value('Command_Enums_EventGuildRankingBattleEndStatusType_Complete')
+
+def _gb_open():
+    try:
+        from engine import seasons
+        return seasons.chosen_guild_battle(storage.home())
+    except Exception as e:
+        print(f'guild battle: setting unreadable: {e!r}')
+        return 0
+
+def _gb_battles(event_id):
+    return sorted((r for r in md('m_event_guild_ranking_battle') if r[1] == event_id), key=lambda r: r[0])
+
+def _gb_boss_hp(battle_id):
+    """The boss's full HP as the game adds it up: each wave's boss enemies (all of them when none is marked boss) at
+    their level, BaseHp x HpCoefficient / 1000."""
+    b = mdx('m_battle', 0).get((battle_id,))
+    if not b:
+        return 0
+    enemies, levels = (mdx('m_enemy', 0), mdx('m_enemy_level_parameter_base', 0, 1))
+    total = 0
+    for w in (r for r in md('m_battle_wave') if r[0] == b[2]):
+        group = [r for r in md('m_battle_enemy') if r[0] == w[2]]
+        for be in [r for r in group if r[5] == 2] or group:
+            e = enemies.get((be[2],))
+            if not e:
+                continue
+            lv = levels.get((be[9] or e[15], be[3]))
+            if lv:
+                total += lv[2] * e[7] // 1000
+    return total
+
+def _gb_info(info, bid):
+    info.event_guild_ranking_battle_id = bid
+    info.enemy_remain_hp_rate_permyriad = GB_FULL         # a mock fight: nobody is in a live battle
+
+_gb_top_view = _guild_view(None)
+
+def guild_battle_top(st, req, ctx):
+    r = _gb_top_view(st, req, ctx)
+    b = r.post_pvt_event_guild_ranking_top
+    b.SetInParent()
+    gid = _my_guild(st, None)
+    if gid:
+        b.display_guild_id = _gdisp(gid)
+    for row in _gb_battles(_gb_open()):
+        _gb_info(b.event_guild_ranking_battle_info_list.add(), row[0])
+    return r
+
+def guild_battle_enemy_get(st, req, ctx):
+    with st.transaction('event/guild/ranking/battle/enemy/get') as tx:
+        pass
+    body = P.Command_ApiNetwork_Api_PostPvtEventGuildRankingBattleEnemyGetResponse(enemy_remain_hp_rate_permyriad=GB_FULL)
+    return _resp(tx, 'post_pvt_event_guild_ranking_battle_enemy_get', body)
+
+def guild_ranking_list(st, req, ctx):
+    with st.transaction('event/guild/ranking/list') as tx:
+        pass
+    return _resp(tx, 'post_pvt_event_guild_ranking_list', P.Command_ApiNetwork_Api_PostPvtEventGuildRankingListResponse())
+
+def guild_battle_practice_start(st, req, ctx):
+    q = req.post_pvt_event_guild_ranking_battle_practice_start
+    row = mdx('m_event_guild_ranking_battle', 0).get((q.event_guild_ranking_battle_id,))
+    body = P.Command_ApiNetwork_Api_PostPvtEventGuildRankingBattlePracticeStartResponse()
+    with st.transaction('event/guild/ranking/battle/practice/start') as tx:
+        if row:
+            e = _new_entry(st, tx, row[3], row[0], 'Command_Enums_BattleType_GuildRanking', q.party_id, 0, now_ms(), ctx=ctx)
+            body.entry_count = e.entry_count
+            body.battle_enemy_info.SetInParent()
+            body.guild_battle_response_type = GB_SUCCESS
+        else:
+            print(f'guild battle: practice start for unknown fight {q.event_guild_ranking_battle_id}')
+    return _resp(tx, 'post_pvt_event_guild_ranking_battle_practice_start', body)
+
+def guild_battle_practice_end(st, req, ctx):
+    q = req.post_pvt_event_guild_ranking_battle_practice_end
+    raw = q.event_guild_ranking_battle_id
+    bid, damage = (raw & (1 << GB_DAMAGE_SHIFT) - 1, raw >> GB_DAMAGE_SHIFT)
+    damage = damage or q.achieve_damage
+    q.event_guild_ranking_battle_id = bid
+    row = mdx('m_event_guild_ranking_battle', 0).get((bid,))
+    body = P.Command_ApiNetwork_Api_PostPvtEventGuildRankingBattlePracticeEndResponse()
+    with st.transaction('event/guild/ranking/battle/practice/end') as tx:
+        if row:
+            _end_entry(st, tx, row[3])
+            hp = _gb_boss_hp(row[3])
+            s = body.battle_score_result
+            s.before_enemy_remain_hp = hp
+            s.achieve_damage = damage
+            s.actual_damage = min(damage, hp) if hp else damage     # member_damage stays 0: no one else fights a mock
+            s.battle_score = s.total_score = damage
+            for c in st['user_character_list'].values():
+                s.before_user_characters.add().CopyFrom(c)
+                s.after_user_characters.add().CopyFrom(c)
+            if damage > 0:
+                ub = st.get('user_event_guild_ranking_battle_list', bid) or st.new_row('user_event_guild_ranking_battle_list', event_guild_ranking_battle_id=bid)
+                if damage > ub.practice_battle_best_total_score:
+                    ub.practice_battle_best_score = ub.practice_battle_best_total_score = damage
+                    ub.high_score = max(ub.high_score, damage)
+                    tx.upsert('user_event_guild_ranking_battle_list', ub)
+        else:
+            print(f'guild battle: practice end for unknown fight {bid}')
+        body.battle_end_status_type = GB_COMPLETE
+        body.battle_input.CopyFrom(q.battle_input)
+        body.battle_input.total_damage = damage
+    return _resp(tx, 'post_pvt_event_guild_ranking_battle_practice_end', body)
+
+def _gb_guild_heal(st):
+    """A Guild Battle picked in the launcher needs a guild: a player in none joins the shared Reawakened guild (made
+    on first need, its first player the master), so the Guild Battle button and its menus open."""
+    event = _gb_open()
+    if not event or _my_guild(st, None):
+        return
+    now = now_ms()
+    cfg = md('m_config_guild')[0]
+    with st.transaction('guild battle guild') as tx:
+        with _GUILD_LOCK:
+            gid = _gkv_get('gb_guild') or 0
+            g = _guild_load(gid) if gid else None
+            if g is not None and len(_guild_members_here(gid)) >= cfg[7]:
+                print(f'guild battle: the {GB_GUILD_NAME} guild is full, {st.user_id} stays out')
+                return
+            role = 0
+            if g is None:
+                gid = _new_guild_id()
+                g = _new_guild_tables(gid, GB_GUILD_NAME, now, cfg, False)
+                _guild_save(gid, g)
+                _gkv_set('gb_guild', gid)
+                role = G_MASTER
+            _gjoin_drop(st.user_id)
+        _guild_join_rows(st, tx, gid, g, now)
+        if role:
+            own = st.one('shared_guild_member_list')
+            own.guild_role_type = role
+            tx.upsert('shared_guild_member_list', own)
+        tx.upsert('user_guild_bonus_list', st.new_row('user_guild_bonus_list', guild_bonus_id=cfg[13], level=1))
+        if mdx('m_event_base', 0).get((event,)):
+            r = st.get('user_event_guild_ranking_base_list', event) or st.new_row('user_event_guild_ranking_base_list', event_base_id=event)
+            r.guild_id = gid
+            tx.upsert('user_event_guild_ranking_base_list', r)
+        print(f'guild battle: {st.user_id} joined the {GB_GUILD_NAME} guild {gid}')
+HANDLERS.update({'/api/pvt/event/guild/ranking/top': guild_battle_top, '/api/pvt/event/guild/ranking/battle/enemy/get': guild_battle_enemy_get, '/api/pvt/event/guild/ranking/list': guild_ranking_list, '/api/pvt/event/guild/ranking/battle/practice/start': guild_battle_practice_start, '/api/pvt/event/guild/ranking/battle/practice/end': guild_battle_practice_end})
 
 def weapon_limit_reset(st, req, ctx):
     q = req.post_pvt_weapon_limit_reset
@@ -9471,6 +10065,14 @@ def announcement_detail(st, req, ctx):
         pass
     r = _resp(tx)
     r.post_announcement_detail.SetInParent()
+    n = next((n for n in _notices() if n['id'] == req.post_announcement_detail.id), None)
+    if n:
+        d = r.post_announcement_detail.announcement_detail
+        _notice_summary(d.summary, n)
+        d.data = json.dumps({'announcementDetailParameters': [{
+            'announcementBlockType': _NOTICE_BODY, 'commonBodyText': n['body'], 'isShowBodyBackGround': False,
+            'commonBodyTextAlignmentOptions': _NOTICE_TOP_LEFT, 'headerText': '', 'bannerResourceId': 0, 'gachaId': 0,
+            'announceId': n['id'], 'bannerImagePath': ''}]})
     return r
 HANDLERS.update({'/api/pvt/dungeon/another/item': dungeon_another_item, '/api/pvt/limited/release/start': limited_release_start, '/api/pvt/dungeon/delete': dungeon_delete, '/api/pvt/event/guild/ranking/battle/member/list': guild_battle_member_list, '/api/announcement/detail': announcement_detail, '/api/pvt/dungeon/another/treasure': _ii_treasure(HANDLERS['/api/pvt/dungeon/another/treasure']), '/api/pvt/dungeon/another/start': _ii_clear_first('post_pvt_dungeon_another_start')(HANDLERS['/api/pvt/dungeon/another/start']), '/api/pvt/dungeon/another/end': _ii_clear_first('post_pvt_dungeon_another_end')(HANDLERS['/api/pvt/dungeon/another/end'])})
 
@@ -9878,6 +10480,35 @@ def _area_category_win(st, tx, area_id, now):
 
 
 # ---- Escalation Challenge missions against the levels actually cleared ---------------------------------------------
+def _panel_battle_missions_heal(st):
+    """Mission panels' ProgressBattleWin missions ("Clear "Lightning 3" 1 time(s)", m_mission col 5 = the stage's
+    battle) count wins made while a panel is open. Panels were closed until they reopened, so wins made before then
+    never counted (#108): each is caught up to the wins of the event stages that fight that battle."""
+    panel_groups = {r[2] for r in md('m_mission_panel_mission_group_rel')}
+    wins = {}
+    for row in st.tables.get('user_event_solo_battle_list', {}).values():
+        stage = _stage(row.event_solo_battle_id)
+        if stage and row.total_win_count:
+            wins[stage[5]] = wins.get(stage[5], 0) + row.total_win_count
+    t = now_ms(); fix = []
+    for m in _mt_index().get(MTYPE['ProgressBattleWin'], []):
+        if m[3] == 3 or not m[5] or _set_group(m[1]) not in panel_groups or not _group_open(_set_group(m[1]), t):
+            continue
+        row = st.get('user_mission_list', m[0])
+        if wins.get(m[5], 0) > (row.progress_count if row else 0):
+            fix.append((m, row))
+    if not fix:
+        return 0
+    with st.transaction('missions: panel stage clears') as tx:
+        for m, row in fix:
+            row = row or st.new_row('user_mission_list', mission_id=m[0])
+            old, row.progress_count = row.progress_count, wins[m[5]]
+            _announce_step(st, tx, m, row, old, t)
+            tx.upsert('user_mission_list', row)
+    print(f'panel battle missions heal: {st.user_id} {len(fix)} mission(s) caught up from stage wins')
+    return len(fix)
+
+
 def _escalation_missions_heal(st):
     """Met ones marked done; ones an earlier build marked done for any clear taken back, unless already claimed."""
     best = {}

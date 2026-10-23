@@ -13,6 +13,8 @@ reward's text, copied into the shop text when the shop text lacks it.
 Generated Events-list cards and event towers (recipe "list_cards",
 "guild_card", "escalation_cards", "event_towers") are built by engine/cards.py, as
 are solo copies of co-op fights unless gameplay-settings.json has "coop_as_solo": false.
+The Story screen's Crossover Stories and Event Stories titles (recipe "story_titles") are built by
+engine/storytitles.py.
 """
 import base64
 import copy
@@ -28,7 +30,7 @@ import msgpack
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
-from engine import cards, codec, storage
+from engine import cards, codec, edition, storage, storytitles
 
 
 def _safe_path(path, root):
@@ -84,7 +86,7 @@ def _language(root, recipe, source):
     """
     stock = Path(storage.path('gamedata', 'stock', 'language_catalog.enc', root=root, legacy_fallback=False))
     if not (recipe.get('gear_exchange_costumes') or recipe.get('shop_item_additions')
-            or cards.wanted(recipe)) or not stock.is_file():
+            or cards.wanted(recipe) or storytitles.wanted(recipe)) or not stock.is_file():
         return {}, {}
     loaded = {}
     try:
@@ -115,6 +117,9 @@ def _language(root, recipe, source):
         stock_text = lambda name: ({entry['id']: entry['value'] for entry in text(name)['data']}
                                    if name in entries else {})
         for table, values in cards.texts(recipe, source, stock_text).items():
+            if table in entries:
+                wanted.setdefault(table, {}).update(values)
+        for table, values in storytitles.texts(recipe, source, stock_text).items():
             if table in entries:
                 wanted.setdefault(table, {}).update(values)
         changed = {}
@@ -224,6 +229,14 @@ def _add_offline_rows(tables, recipe, source):
         add('m_condition', [condition, 2, 0, 0, 0, 0, end] + [0] * 12)
         add('m_condition_set', [group, 1, 0])
         add('m_condition_set_rel', [group, condition])
+    # #93: the home screen's banner slide-show advertised Square's draws and events. With "hide_home_banners" every
+    # m_banner row (col 3 = display condition set) gets the never-true set above, so the strip shows nothing.
+    # gameplay-settings.json "home_banners": true brings them back.
+    if recipe.get('hide_home_banners') and 'm_banner' in tables:
+        for row in tables['m_banner']:
+            if len(row) <= 3:
+                raise ValueError('MasterData is incomplete or incompatible: m_banner row without a display condition')
+            row[3] = 620009999001
     if 'm_gacha_appeal2' in tables:
         existing = {row[0] for row in tables['m_gacha_appeal2']}
         for row in source('m_gacha_appeal'):
@@ -244,8 +257,31 @@ def _add_offline_rows(tables, recipe, source):
             add('m_reward_set', [reward, 1, 0, 0, 0])
             add('m_reward_set_reward_rel', [reward * 100 + 1, reward,
                                           1000000 + costume_id, 1, 1, 0, False])
+    # #94: one reward list for the Chocobo Farm's chests and event visitors ("farm_rewards", [reward, min, max] each), as
+    # the game's farm lists are: one entry at random per claim (m_reward_set column 1 = 2), its count between min and max.
+    farm = recipe.get('farm_rewards')
+    if farm:
+        rewards = {row[0] for row in source('m_reward')}
+        set_id = farm['reward_set']
+        add('m_reward_set', [set_id, 2, 0, 0, 0])
+        for seq, (reward, low, high) in enumerate(farm['rewards']):
+            if reward not in rewards:
+                raise ValueError(f'MasterData is incomplete or incompatible: farm reward {reward} is missing')
+            add('m_reward_set_reward_rel', [set_id * 100 + seq + 1, set_id, reward, seq, low, high, False])
+        for table, column in (('m_chocobo_farm_treasure', 3), ('m_chocobo_event_farm_treasure', 2)):
+            for row in tables.get(table, ()):
+                row[column] = set_id
+    # A price the game has no set for ("consumption_set_additions", [set id, reward, count] each), numbered as the
+    # game's own Minor Guild Medal prices are: reward id * 10000 + count (200000522000 = 2,000 Minor Guild Medals).
+    rewards = {row[0] for row in source('m_reward')} if recipe.get('consumption_set_additions') else set()
+    for set_id, reward, count in recipe.get('consumption_set_additions', []):
+        if reward not in rewards:
+            raise ValueError(f'MasterData is incomplete or incompatible: price {set_id} needs reward {reward}')
+        add('m_consumption_set', [set_id])
+        add('m_consumption_set_consumption_rel', [set_id, set_id, reward, count])
     # A shop item copied from a neighbour in the same exchange ("like"), selling another reward. Its reward set
     # follows the game's own numbering for one reward (reward id * 10000 + 1); its name is the reward's text id.
+    # "columns" ({column: value}) changes other cells of the copy, such as its price (col 8) or refill (col 17).
     for added in recipe.get('shop_item_additions', []):
         like = next((row for row in tables.get('m_shop_item', []) if row[0] == added['like']), None)
         reward = next((row for row in source('m_reward') if row[0] == added['reward']), None)
@@ -255,6 +291,10 @@ def _add_offline_rows(tables, recipe, source):
         reward_set = added['reward'] * 10000 + 1
         row = list(like)
         row[0], row[6], row[11], row[13] = added['shop_item'], reward_set, added['order'], reward[3]
+        for column, value in added.get('columns', {}).items():
+            if not 0 <= int(column) < len(row) or int(column) in (0, 6, 11, 13):
+                raise ValueError(f"shop item {added['shop_item']}: column {column} can't be set")
+            row[int(column)] = value
         add('m_shop_item', row)
         add('m_reward_set', [reward_set, 1, 0, 0, 0])
         add('m_reward_set_reward_rel', [reward_set * 100 + 1, reward_set, added['reward'], 1, added['count'], 0, False])
@@ -349,7 +389,11 @@ def _load_recipe(root):
     recipe = json.loads(recipe_file.read_text(encoding='utf-8-sig'))
     if recipe.get('version') != 1:
         raise ValueError('Unsupported offline MasterData patch recipe version')
-    recipe['coop_as_solo'] = _settings(root).get('coop_as_solo', True) is not False   # engine/cards.py build_coop_solo
+    settings = _settings(root)
+    recipe['coop_as_solo'] = settings.get('coop_as_solo', True) is not False   # engine/cards.py build_coop_solo
+    edition.call('patch_recipe', recipe)
+    if settings.get('home_banners') is True:                                       # #93: Square's home banners back
+        recipe['hide_home_banners'] = False
     return recipe
 
 
@@ -368,15 +412,66 @@ def _expected(recipe, source):
         expected[table] = copy.deepcopy(source(table))
         _apply_cells(expected[table], table, spec)
     _add_offline_rows(expected, recipe, source)
+    edition.call('patch_tables', expected, source)
     cards.build(recipe, source, expected)
+    storytitles.build(recipe, source, expected)
     for rows in expected.values():
         rows.sort(key=lambda row: row[0])
     return expected
 
 
+CACHE = 'patch-cache.json'
+
+
+def _fingerprint(root, recipe, paths):
+    """Digest of everything a build depends on: the files' names, sizes and times, the recipe and settings it was
+    loaded with, and this module's, cards.py's and the edition's code. Equal digests mean an equal result."""
+    h = hashlib.sha256(json.dumps(recipe, sort_keys=True).encode())
+    h.update(edition.source())
+    for module in (__file__, cards.__file__, storytitles.__file__):
+        h.update(Path(module).read_bytes())
+    for path in sorted(paths, key=str):
+        stat = Path(path).stat()
+        h.update(f'{path}|{stat.st_size}|{stat.st_mtime_ns}\n'.encode())
+    return h.hexdigest()
+
+
+def _cache(root):
+    return Path(storage.path('gamedata', CACHE, root=root, legacy_fallback=False))
+
+
+def _cached(root, key, digest):
+    try:
+        return json.loads(_cache(root).read_text(encoding='utf-8')).get(key) == digest
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _remember(root, key, digest):
+    path = _cache(root)
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+        data = data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        data = {}
+    data[key] = digest
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(json.dumps(data, indent=1), encoding='utf-8')
+        tmp.replace(path)
+    except OSError:
+        pass                      # only a speed-up: the next start checks everything again
+
+
 def check_tables(root, files):
-    """Raise ValueError unless the offline edits apply to these tables ({table: encrypted file}). Writes nothing."""
-    recipe = _load_recipe(Path(root).resolve())
+    """Raise ValueError unless the offline edits apply to these tables ({table: encrypted file}). Writes nothing
+    but the record of tables that passed, so unchanged tables aren't checked again on every start."""
+    root = Path(root).resolve()
+    recipe = _load_recipe(root)
+    digest = _fingerprint(root, recipe, files.values())
+    if _cached(root, 'checked', digest):
+        return
     cache = {}
     def source(table):
         if table not in files:
@@ -385,6 +480,7 @@ def check_tables(root, files):
             cache[table] = _read_rows(Path(files[table]))
         return cache[table]
     _expected(recipe, source)
+    _remember(root, 'checked', digest)
 
 
 def ensure_live_data(root):
@@ -398,6 +494,13 @@ def ensure_live_data(root):
     live = _safe_path(Path(storage.path('gamedata', 'live', root=root, legacy_fallback=False)), root)
     _safe_tree(live, root)
     recipe = _load_recipe(root)
+    # Unchanged inputs and an intact live folder: the last build or check still holds.
+    text_stock = Path(storage.path('gamedata', 'stock', 'language_catalog.enc', root=root, legacy_fallback=False)).parent
+    inputs = [p for folder in dict.fromkeys((stock, text_stock)) for p in folder.rglob('*') if p.is_file()]
+    marker = live / 'x-master-language-path.txt'
+    digest = _fingerprint(root, recipe, inputs + ([marker] if marker.is_file() else []))
+    if _cached(root, 'live', digest) and _live_intact(live):
+        return False
     catalog = _load_catalog(_safe_path(stock / 'catalog.enc', root))
     entries = {entry['table']: entry for entry in catalog['tables']}
     cache = {}
@@ -412,6 +515,7 @@ def ensure_live_data(root):
     manual = language_reference.is_file() and not _generated_language(live)
     text = ({}, {}) if manual else _language(root, recipe, source)  # a reference set by hand is left alone
     if _valid_live(live, catalog, expected, text):
+        _remember(root, 'live', digest)
         return False
     live.parent.mkdir(parents=True, exist_ok=True)
     staged = storage.new_folder(live.parent, '.live-')
@@ -449,4 +553,36 @@ def ensure_live_data(root):
         if staged.exists():
             _safe_tree(staged, root)
             shutil.rmtree(staged)
+    _remember(root, 'live', _fingerprint(root, recipe, inputs + ([marker] if marker.is_file() else [])))
     return True
+
+
+def story_titles(root):
+    """(recipe, {event scene dungeon: its Story copy}) for engine/storyart.py, from the stock tables; ({}, {}) when the
+    recipe has no story titles. The same copies the rebuild gives m_dungeon rows."""
+    root = Path(root).resolve()
+    recipe = _load_recipe(root)
+    if not storytitles.wanted(recipe):
+        return {}, {}
+    stock = _safe_path(Path(storage.path('gamedata', 'stock', root=root, legacy_fallback=False)), root)
+    cache = {}
+    def source(table):
+        if table not in cache:
+            cache[table] = _read_rows(_safe_path(stock / 'tables' / (table + '.enc'), root))
+        return cache[table]
+    return recipe, storytitles.dungeon_copies(recipe, source)
+
+
+def _live_intact(live):
+    """Every file the live folder serves is still there with the size it was written with."""
+    try:
+        served = json.loads((live / 'served_paths.json').read_text())
+        catalog = json.loads((live / 'catalog.json').read_text(encoding='utf-8-sig'))
+        sizes = {f"tables/{entry['table']}.enc": entry['size'] for entry in catalog['tables']}
+        for filename in served.values():
+            path = live / filename
+            if not path.is_file() or (filename in sizes and path.stat().st_size != sizes[filename]):
+                return False
+        return (live / 'x-master-path.txt').is_file()
+    except (OSError, ValueError, TypeError, KeyError):
+        return False

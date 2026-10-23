@@ -71,3 +71,43 @@ def fill_history(folder, c):
         return False
     json.dump(c.get('history_list') or [], open(p, 'w'), indent=0)
     return True
+
+def _unconv(desc, d):
+    """Reverse of _conv: proto field names -> the export's UpperCamel keys."""
+    out = {}
+    fields = {f.name: f for f in desc.fields}
+    for k, v in d.items():
+        f = fields.get(k)
+        if f is None:
+            continue
+        key = ''.join((p[:1].upper() + p[1:] for p in k.split('_')))
+        if f.message_type is not None and (not f.message_type.GetOptions().map_entry):
+            out[key] = [_unconv(f.message_type, x) for x in v] if isinstance(v, list) else _unconv(f.message_type, v)
+        else:
+            out[key] = v
+    return out
+
+def _gift_list(folder, name):
+    p = os.path.join(folder, name)
+    return json.load(open(p, encoding='utf-8')) if os.path.isfile(p) else []
+
+def export(folder):
+    """An account folder as an account export that convert() reads back: the current tables, other info, the
+    gift inbox (with gifts waiting for inbox space) and the gift history."""
+    from engine import vault
+    st = vault.State.load(folder)
+    try:
+        resp = P.Command_ApiNetwork_Api_ApiResponse()
+        update = resp.common.user.update
+        for f in vault.TABLES.fields:
+            getattr(update, f.name).extend(st.tables.get(f.name, {}).values())
+        other = st.other_info if st.other_info is not None else resp.common.user.other_info
+        gifts = _gift_list(folder, 'inbox.json') + _gift_list(folder, 'inbox_overflow.json')
+        return {'AccountInfo': _unconv(update.DESCRIPTOR, MessageToDict(update, preserving_proto_field_name=True)),
+                'OtherInfo': _unconv(other.DESCRIPTOR, MessageToDict(other, preserving_proto_field_name=True)),
+                'GiftsInfo': [_unconv(P.Command_Entity_RewardInfo.DESCRIPTOR, g) for g in gifts],
+                'GiftHistoryInfo': [_unconv(P.Command_ApiNetwork_Api_HistoryGiftInfo.DESCRIPTOR, h)
+                                    for h in _gift_list(folder, 'inbox_history.json')]}
+    finally:
+        if st._conn is not None:
+            st._conn.close()
